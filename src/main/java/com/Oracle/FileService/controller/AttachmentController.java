@@ -40,6 +40,7 @@ public class AttachmentController {
         try{
             Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
             Long uploaded_by = Long.parseLong(authentication.getName());
+            System.out.println("Uploading file for user: " + uploaded_by);
 
             String filePath = attachmentRequest.file_url();
             File file = new File(filePath);
