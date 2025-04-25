@@ -15,22 +15,24 @@ public class TokenService {
 
     public Long getUserId(String token){
         if(token == null){
-            throw new RuntimeException();
+            throw new RuntimeException("Token is null");
         }
-        DecodedJWT verifier = null;
         try{
             Algorithm algorithm = Algorithm.HMAC256(secret);
-            verifier = JWT.require(algorithm)
+            DecodedJWT verifier = JWT.require(algorithm)
                     .withIssuer("Oracle Project")
                     .build()
                     .verify(token);
+
+            Long id = verifier.getClaim("id").asLong();
+            if(id == null){
+                throw new RuntimeException("ID claim is missing");
+            }
+            return id;
         }catch(JWTVerificationException e){
-            System.out.println(e.toString());
+            System.out.println("JWT Verification failed: " + e.getMessage());
+            System.out.println("Secret used: " + (secret != null ? secret : "null"));
+            throw new RuntimeException("Token verification failed: " + e.getMessage());
         }
-        Long id = verifier.getClaim("id").asLong();
-        if(id == null){
-            throw new RuntimeException("Invalid verifier");
-        }
-        return id;
     }
 }
