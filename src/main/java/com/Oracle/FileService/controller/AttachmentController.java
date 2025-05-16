@@ -6,20 +6,15 @@ import com.Oracle.FileService.data.AttachmentResponse;
 import com.Oracle.FileService.model.Attachment;
 import com.Oracle.FileService.service.AttachmentService;
 import com.Oracle.FileService.service.ObjectStorageService;
-import oracle.ucp.proxy.annotation.Pre;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.multipart.MultipartFile;
 
-import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.InputStream;
-import java.util.Base64;
 import java.util.List;
 
 @RestController
@@ -63,7 +58,7 @@ public class AttachmentController {
             AttachmentResponse attachmentResponse = new AttachmentResponse(
                     savedAttachment.getAttachment_id(),
                     savedAttachment.getFile_url(),
-                    savedAttachment.getTask_id(),
+                    savedAttachment.getTaskId(),
                     savedAttachment.getUploaded_by());
             return ResponseEntity.ok(attachmentResponse);
 
@@ -80,7 +75,7 @@ public class AttachmentController {
                 .map(attachment -> new AttachmentResponse(
                         attachment.getAttachment_id(),
                         attachment.getFile_url(),
-                        attachment.getTask_id(),
+                        attachment.getTaskId(),
                         attachment.getUploaded_by()))
                 .toList();
         return ResponseEntity.ok(attachmentService.getAllAttachments());
@@ -93,10 +88,32 @@ public class AttachmentController {
                 .map(attachment -> new AttachmentResponse(
                         attachment.getAttachment_id(),
                         attachment.getFile_url(),
-                        attachment.getTask_id(),
+                        attachment.getTaskId(),
                         attachment.getUploaded_by()))
                 .toList();
         return ResponseEntity.ok(attachmentResponses);
+    }
+
+    @DeleteMapping("/{attachment_id}")
+    public ResponseEntity<?> deleteAttachment(@PathVariable Long attachment_id){
+        try{
+            System.out.println("Deleting attachment with ID: " + attachment_id);
+            attachmentService.removeAttachmentById(attachment_id);
+            return ResponseEntity.ok("Attachment deleted successfully");
+        }catch(Exception e){
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Error deleting attachment: " + e.getMessage());
+        }
+    }
+
+    @DeleteMapping("/task/{task_id}")
+    public ResponseEntity<?> deleteByTaskId(@PathVariable Long task_id){
+        try{
+            System.out.println("Deleting attachments for task ID: " + task_id);
+            attachmentService.removeAllAttachmentsFromTask(task_id);
+            return ResponseEntity.ok("Attachments deleted successfully");
+        }catch(Exception e){
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Error deleting attachments: " + e.getMessage());
+        }
     }
 
 }

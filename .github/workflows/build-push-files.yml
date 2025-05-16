@@ -1,0 +1,187 @@
+name: Build and Push Auth Service Image
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    env:
+      REGISTRY: mx-queretaro-1.ocir.io
+      NAMESPACE: axfvmmw9g9lu
+      REPOSITORY: taskmanager
+      IMAGE_NAME: file-service
+      VERSION: 2 #Cambiar siempre que se haga un push
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Recreate wallet files from secrets
+        run: |
+          # Crear el directorio de wallet
+          mkdir -p wallet
+          
+          # Decodificar los secretos y crear los archivos
+          echo "${{ secrets.WALLET_CWALLET_SSO }}" | base64 -d > wallet/cwallet.sso
+          echo "${{ secrets.WALLET_TNSNAMES_ORA }}" | base64 -d > wallet/tnsnames.ora
+          echo "${{ secrets.WALLET_SQLNET_ORA }}" | base64 -d > wallet/sqlnet.ora
+          echo "${{ secrets.WALLET_EWALLET_P12 }}" | base64 -d > wallet/ewallet.p12
+          echo "${{ secrets.WALLET_KEYSTORE_JKS }}" | base64 -d > wallet/keystore.jks
+          echo "${{ secrets.WALLET_OJDBC_PROPERTIES }}" | base64 -d > wallet/ojdbc.properties
+          echo "${{ secrets.WALLET_EWALLET_PEM }}" | base64 -d > wallet/ewallet.pem
+          echo "${{ secrets.WALLET_README }}" | base64 -d > wallet/README
+          echo "${{ secrets.WALLET_TRUSTSTORE_JKS }}" | base64 -d > wallet/truststore.jks
+          
+          # Establecer permisos correctos
+          chmod 600 wallet/*
+          
+          mkdir -p oci-keys
+          
+          echo "${{ secrets.OCI_OBJECT_STORAGE_PRIVATE_KEY }}" | base64 -d > oci-keys/oci-private-key.pem
+          
+          chmod 600 oci-keys/oci-private-key.pem
+          
+          echo "Contenido del wallet:"
+          
+          # Verificar la creación de los archivos
+          ls -la wallet/
+          
+          echo "Contenido de oci-keys:"
+          ls -la oci-keys/
+          
+          head -3 oci-keys/oci-private-key.pem
+
+      - name: Set up JDK
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'  # Cambia a '23' si estás usando JDK 23
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Modify application.properties
+        run: |
+          sed -i 's|TNS_ADMIN=C:/Users/cesar/Wallet_TelegramBotDatabase|TNS_ADMIN=/wallet|g' src/main/resources/application.properties
+          # Verificar el cambio
+          cat src/main/resources/application.properties
+          
+          sed -i 's|oci.private-key-path=${OCI_PRIVATE_KEY_PATH:C:/Users/cesar/ObjectStorageKeys/a01281202@tec.mx_2025-03-22T10_08_12.916Z.pem}|oci.private-key-path=/oci-keys/oci-key.pem|g' src/main/resources/application.properties
+          
+          cat srd/main/resources/application.properties
+
+      - name: Build with Maven
+        run: |
+          mvn clean package -DskipTests
+
+      # Movemos el JAR a una ubicación donde el Dockerfile pueda acceder
+      - name: Prepare for Docker build
+        run: |
+          mkdir -p build
+
+          echo "Contenido del directorio target:"
+          ls -la target/
+
+          echo "Copiando JAR a build/"
+          cp target/FileService-0.0.1-SNAPSHOT.jar build/
+
+          echo "Verificando archivo copiado:"
+          ls -la build/
+
+          echo "Creando directorio para wallet y para el oci-keys"
+          mkdir -p build/wallet build/oci-keys
+          cp -r wallet/* build/wallet/
+          cp -r oci-keys/* build/oci-keys/
+
+          echo "Contenido de build/wallet:"
+          ls -la build/wallet/
+
+          echo "Creando Dockerfile"
+          cat > Dockerfile << EOF
+          FROM eclipse-temurin:17-jre
+
+          # Mostrar versión de Java para verificar
+          RUN java -version
+
+          # Establecer directorio de trabajo
+          WORKDIR /app
+
+          # Crear directorios
+          RUN mkdir -p /wallet /oci-keys
+
+          # Copiar JAR y wallet
+          COPY build/FileService-0.0.1-SNAPSHOT.jar /app/app.jar
+          COPY build/wallet/ /wallet/
+          COPY build/oci-keys/ /oci-keys/
+
+          # Verificar archivos copiados
+          RUN echo "===== Contenido de /app ====="
+          RUN ls -la /app/
+
+          RUN echo "===== Contenido de /wallet ====="
+          RUN ls -la /wallet/
+          
+          RUN echo "===== Contenido de /oci-keys ====="
+          RUN ls -la /oci-keys/
+
+          # Establecer permisos explícitos
+          RUN chmod 755 /app/app.jar
+          RUN chmod 600 /wallet/* /oci-keys/*
+
+          # Configurar variables de entorno
+          ENV TNS_ADMIN=/wallet
+          ENV ORACLE_HOME=/wallet
+          ENV LD_LIBRARY_PATH=/wallet
+          ENV OCI_PRIVATE_KEY_PATH=/oci-keys/oci-private-key.pem
+
+          # Puerto de la aplicación
+          EXPOSE 8082
+
+          # Comando de inicio con logging detallado
+          ENTRYPOINT ["java", "-Djava.security.egd=file:/dev/./urandom", "-jar", "/app/app.jar"]
+          EOF
+
+          echo "Contenido del Dockerfile:"
+          cat Dockerfile
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Login to Oracle Cloud Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ env.NAMESPACE }}/${{ secrets.OCI_USERNAME }}
+          password: ${{ secrets.OCI_AUTH_TOKEN }}
+
+      - name: Build and Push Docker image
+        run: |
+          echo "Construyendo imagen Docker..."
+          docker build --no-cache -t ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:v${{ env.VERSION }} -f Dockerfile .
+          
+          echo "Verificando la imagen construida..."
+          docker images
+          
+          echo "Probando la imagen localmente..."
+          docker run --name test-container -d ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:v${{ env.VERSION }}
+          
+          echo "Logs del contenedor de prueba (primeros 10 segundos):"
+          sleep 10
+          docker logs test-container || echo "Error al obtener logs"
+          
+          echo "Limpiando contenedor de prueba..."
+          docker rm -f test-container || echo "Error al eliminar contenedor"
+          
+          echo "Subiendo imagen a registry..."
+          docker push ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:v${{ env.VERSION }}
+
+      - name: Print image details
+        run: |
+          echo "============================================"
+          echo "Image successfully built and pushed!"
+          echo "Image: ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:v${{ env.VERSION }}"
+          echo "============================================"
+          echo "To update your Kubernetes deployment, run:"
+          echo "kubectl set image deployment/file-service file-service=${{ env.REGISTRY }}/${{ env.NAMESPACE }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:v${{ env.VERSION }}"
+          echo "============================================"

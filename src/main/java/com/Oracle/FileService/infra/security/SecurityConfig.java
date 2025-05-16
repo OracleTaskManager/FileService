@@ -27,6 +27,8 @@ public class SecurityConfig {
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers("/swagger-ui.html","/v3/api-docs/**","swagger-ui/**")
                         .permitAll()
+                        .requestMatchers("/swagger-files/**", "/swagger-files/v3/api-docs/**", "/swagger-files/swagger-ui/**")
+                        .permitAll()
                         .anyRequest().authenticated()
                 )
                 .addFilterBefore(securityFilter, UsernamePasswordAuthenticationFilter.class)

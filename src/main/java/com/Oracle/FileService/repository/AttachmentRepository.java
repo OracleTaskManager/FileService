@@ -10,7 +10,9 @@ import java.util.List;
 @Repository
 public interface AttachmentRepository extends JpaRepository<Attachment, Long> {
 
-    @Query("SELECT a FROM Attachment a WHERE a.task_id = ?1")
-    List<Attachment> findAllByTaskId(Long task_id);
+    @Query("SELECT a FROM Attachment a WHERE a.taskId = ?1")
+    List<Attachment> findAllByTaskId(Long taskId);
+
+    void deleteAllByTaskId(Long taskId);
 
 }

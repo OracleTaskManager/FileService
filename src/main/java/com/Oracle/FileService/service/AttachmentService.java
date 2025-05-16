@@ -3,6 +3,7 @@ package com.Oracle.FileService.service;
 import com.Oracle.FileService.data.AttachmentRequest;
 import com.Oracle.FileService.model.Attachment;
 import com.Oracle.FileService.repository.AttachmentRepository;
+import jakarta.transaction.Transactional;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -24,8 +25,16 @@ public class AttachmentService {
     }
 
     public List<Attachment> getAttachmentsByTaskId(Long task_id) {
-
         return attachmentRepository.findAllByTaskId(task_id);
+    }
+
+    public void removeAttachmentById(Long attachment_id) {
+        attachmentRepository.deleteById(attachment_id);
+    }
+
+    @Transactional
+    public void removeAllAttachmentsFromTask(Long task_id) {
+        attachmentRepository.deleteAllByTaskId(task_id);
     }
 
 }
