@@ -15,7 +15,7 @@ Este repositorio contiene el microservicio de gestión de archivos para el siste
 ### 1. Clonar el repositorio
 
 ```bash
-git clone https://github.com/tuOrganizacion/FileService.git
+git clone https://github.com/OracleTaskManager/FileService.git
 cd FileService
 ```
 
