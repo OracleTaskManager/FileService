@@ -18,11 +18,11 @@ steps:
     name: "Setup environment"
     timeoutInSeconds: 60
     command: |
-      # Generar versión automáticamente basada en timestamp
-      VERSION="v$(date +'%Y%m%d%H%M%S')"
+      # Generar versión automáticamente basada en timestamp (sin el prefijo "v")
+      VERSION="$(date '+%Y%m%d%H%M%S')"
       echo "Generated version: ${VERSION}"
       
-      # Definir la imagen completa
+      # Definir la imagen completa (añadiendo el prefijo "v" aquí)
       export IMAGE_FULL_NAME="${REGISTRY}/${NAMESPACE}/${REPOSITORY}/${IMAGE_NAME}:v${VERSION}"
       echo "Using image: ${IMAGE_FULL_NAME}"
 
