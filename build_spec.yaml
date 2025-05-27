@@ -218,13 +218,6 @@ steps:
     name: "Build and Push Docker image"
     timeoutInSeconds: 900
     command: |
-      # IMPORTANTE: Instalar jq primero (requerido en este step)
-      echo "Installing jq..."
-      apt-get update && apt-get install -y jq curl
-      
-      # Verificar instalación
-      jq --version
-      
       # Establecer variable de imagen con la versión completa
       export IMAGE_TAG="${REGISTRY}/${NAMESPACE}/${REPOSITORY}/${IMAGE_NAME}:v${VERSION}"
       echo "Using image tag: ${IMAGE_TAG}"
@@ -234,38 +227,38 @@ steps:
       echo "AUTH_TOKEN_OCID: ${AUTH_TOKEN_OCID:+SET}"
       echo "USERNAME_OCID: ${USERNAME_OCID:+SET}"
       
-      # Obtener credenciales desde los secretos con mejor manejo de errores
+      # Obtener credenciales desde los secretos usando oci CLI directamente
       echo "Getting credentials from secrets..."
       
-      # Obtener username
+      # Obtener username usando --raw-output
       echo "Getting OCI_USERNAME..."
-      OCI_USERNAME_RESPONSE=$(oci secrets secret-bundle get --secret-id $USERNAME_OCID --stage LATEST 2>&1)
-      if [ $? -ne 0 ]; then
+      OCI_USERNAME_B64=$(oci secrets secret-bundle get --secret-id $USERNAME_OCID --stage LATEST --query 'data."secret-bundle-content".content' --raw-output 2>/dev/null)
+      if [ $? -ne 0 ] || [ -z "$OCI_USERNAME_B64" ]; then
         echo "ERROR: Failed to get OCI_USERNAME secret"
-        echo "Response: $OCI_USERNAME_RESPONSE"
         exit 1
       fi
       
-      OCI_USERNAME=$(echo "$OCI_USERNAME_RESPONSE" | jq -r '.data["secret-bundle-content"].content' | base64 -d 2>/dev/null)
-      if [ $? -ne 0 ]; then
-        echo "ERROR: Failed to decode OCI_USERNAME secret from base64"
-        echo "Raw response: $OCI_USERNAME_RESPONSE"
+      # Decodificar de Base64
+      OCI_USERNAME=$(echo "$OCI_USERNAME_B64" | base64 -d 2>/dev/null)
+      if [ $? -ne 0 ] || [ -z "$OCI_USERNAME" ]; then
+        echo "ERROR: Failed to decode OCI_USERNAME from base64"
+        echo "Base64 content: $OCI_USERNAME_B64"
         exit 1
       fi
       
-      # Obtener auth token
+      # Obtener auth token usando --raw-output  
       echo "Getting OCI_AUTH_TOKEN..."
-      OCI_AUTH_TOKEN_RESPONSE=$(oci secrets secret-bundle get --secret-id $AUTH_TOKEN_OCID --stage LATEST 2>&1)
-      if [ $? -ne 0 ]; then
+      OCI_AUTH_TOKEN_B64=$(oci secrets secret-bundle get --secret-id $AUTH_TOKEN_OCID --stage LATEST --query 'data."secret-bundle-content".content' --raw-output 2>/dev/null)
+      if [ $? -ne 0 ] || [ -z "$OCI_AUTH_TOKEN_B64" ]; then
         echo "ERROR: Failed to get OCI_AUTH_TOKEN secret"
-        echo "Response: $OCI_AUTH_TOKEN_RESPONSE"
         exit 1
       fi
       
-      OCI_AUTH_TOKEN=$(echo "$OCI_AUTH_TOKEN_RESPONSE" | jq -r '.data["secret-bundle-content"].content' | base64 -d 2>/dev/null)
-      if [ $? -ne 0 ]; then
-        echo "ERROR: Failed to decode OCI_AUTH_TOKEN secret from base64"
-        echo "Raw response: $OCI_AUTH_TOKEN_RESPONSE"
+      # Decodificar de Base64
+      OCI_AUTH_TOKEN=$(echo "$OCI_AUTH_TOKEN_B64" | base64 -d 2>/dev/null)
+      if [ $? -ne 0 ] || [ -z "$OCI_AUTH_TOKEN" ]; then
+        echo "ERROR: Failed to decode OCI_AUTH_TOKEN from base64"
+        echo "Base64 content: $OCI_AUTH_TOKEN_B64"
         exit 1
       fi
       
