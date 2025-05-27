@@ -45,23 +45,47 @@ steps:
       # Obtener y guardar los archivos wallet desde los secretos
       echo "Creating wallet files from secrets..."
       
-      # Decodificar los secretos y crear los archivos
-      oci secrets secret-bundle get --secret-id $WALLET_CWALLET_SSO_OCID --stage LATEST | jq -r '.data["secret-bundle-content"].content' | base64 -d > wallet/cwallet.sso
-      oci secrets secret-bundle get --secret-id $WALLET_TNSNAMES_ORA_OCID --stage LATEST | jq -r '.data["secret-bundle-content"].content' > wallet/tnsnames.ora
-      oci secrets secret-bundle get --secret-id $WALLET_SQLNET_ORA_OCID --stage LATEST | jq -r '.data["secret-bundle-content"].content' > wallet/sqlnet.ora
-      oci secrets secret-bundle get --secret-id $WALLET_EWALLET_P12_OCID --stage LATEST | jq -r '.data["secret-bundle-content"].content' | base64 -d > wallet/ewallet.p12
-      oci secrets secret-bundle get --secret-id $WALLET_KEYSTORE_JKS_OCID --stage LATEST | jq -r '.data["secret-bundle-content"].content' | base64 -d > wallet/keystore.jks
-      oci secrets secret-bundle get --secret-id $WALLET_OJDBC_PROPERTIES_OCID --stage LATEST | jq -r '.data["secret-bundle-content"].content' > wallet/ojdbc.properties
-      oci secrets secret-bundle get --secret-id $WALLET_EWALLET_PEM_OCID --stage LATEST | jq -r '.data["secret-bundle-content"].content' > wallet/ewallet.pem
-      oci secrets secret-bundle get --secret-id $WALLET_README_OCID --stage LATEST | jq -r '.data["secret-bundle-content"].content' > wallet/README
-      oci secrets secret-bundle get --secret-id $WALLET_TRUSTSTORE_JKS_OCID --stage LATEST | jq -r '.data["secret-bundle-content"].content' | base64 -d > wallet/truststore.jks
+      # Función para obtener secret con manejo de Base64
+      get_secret() {
+        local secret_id=$1
+        local output_file=$2
+        local is_binary=${3:-false}
+      
+        echo "Getting secret: $secret_id"
+        local response=$(oci secrets secret-bundle get --secret-id "$secret_id" --stage LATEST 2>/dev/null)
+        if [ $? -ne 0 ]; then
+          echo "WARNING: Failed to get secret $secret_id"
+          touch "$output_file"
+          return 1
+        fi
+      
+        local content_type=$(echo "$response" | jq -r '.data["secret-bundle-content"]["content-type"]' 2>/dev/null)
+        local content=$(echo "$response" | jq -r '.data["secret-bundle-content"].content' 2>/dev/null)
+      
+        if [ "$content_type" = "BASE64" ]; then
+          echo "$content" | base64 -d > "$output_file"
+        else
+          echo "$content" > "$output_file"
+        fi
+      }
+      
+      # Obtener y guardar los archivos wallet usando la función
+      echo "Creating wallet files from secrets..."
+      get_secret "$WALLET_CWALLET_SSO_OCID" "wallet/cwallet.sso" true
+      get_secret "$WALLET_TNSNAMES_ORA_OCID" "wallet/tnsnames.ora"
+      get_secret "$WALLET_SQLNET_ORA_OCID" "wallet/sqlnet.ora"
+      get_secret "$WALLET_EWALLET_P12_OCID" "wallet/ewallet.p12" true
+      get_secret "$WALLET_KEYSTORE_JKS_OCID" "wallet/keystore.jks" true
+      get_secret "$WALLET_OJDBC_PROPERTIES_OCID" "wallet/ojdbc.properties"
+      get_secret "$WALLET_EWALLET_PEM_OCID" "wallet/ewallet.pem"
+      get_secret "$WALLET_README_OCID" "wallet/README"
+      get_secret "$WALLET_TRUSTSTORE_JKS_OCID" "wallet/truststore.jks" true
       
       # Establecer permisos correctos
       chmod 600 wallet/*
       
       mkdir -p oci-keys
-      
-      oci secrets secret-bundle get --secret-id $OBJECT_STORAGE_PRIVATE_KEY_OCID --stage LATEST | jq -r '.data["secret-bundle-content"].content' > oci-keys/oci-private-key.pem
+      get_secret "$OBJECT_STORAGE_PRIVATE_KEY_OCID" "oci-keys/oci-private-key.pem"
       
       chmod 600 oci-keys/oci-private-key.pem
       
@@ -222,9 +246,9 @@ steps:
         exit 1
       fi
       
-      OCI_USERNAME=$(echo "$OCI_USERNAME_RESPONSE" | jq -r '.data["secret-bundle-content"].content' 2>/dev/null)
+      OCI_USERNAME=$(echo "$OCI_USERNAME_RESPONSE" | jq -r '.data["secret-bundle-content"].content' | base64 -d 2>/dev/null)
       if [ $? -ne 0 ]; then
-        echo "ERROR: Failed to parse OCI_USERNAME secret with jq"
+        echo "ERROR: Failed to decode OCI_USERNAME secret from base64"
         echo "Raw response: $OCI_USERNAME_RESPONSE"
         exit 1
       fi
@@ -238,9 +262,9 @@ steps:
         exit 1
       fi
       
-      OCI_AUTH_TOKEN=$(echo "$OCI_AUTH_TOKEN_RESPONSE" | jq -r '.data["secret-bundle-content"].content' 2>/dev/null)
+      OCI_AUTH_TOKEN=$(echo "$OCI_AUTH_TOKEN_RESPONSE" | jq -r '.data["secret-bundle-content"].content' | base64 -d 2>/dev/null)
       if [ $? -ne 0 ]; then
-        echo "ERROR: Failed to parse OCI_AUTH_TOKEN secret with jq"
+        echo "ERROR: Failed to decode OCI_AUTH_TOKEN secret from base64"
         echo "Raw response: $OCI_AUTH_TOKEN_RESPONSE"
         exit 1
       fi
