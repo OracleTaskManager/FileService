@@ -33,6 +33,9 @@ steps:
     name: "Recreate wallet files from secrets"
     timeoutInSeconds: 300
     command: |
+      # Instalar jq (requerido en este step)
+      apt-get update && apt-get install -y jq
+      
       # Crear el directorio de wallet
       mkdir -p wallet
       
@@ -188,21 +191,32 @@ steps:
     name: "Build and Push Docker image"
     timeoutInSeconds: 900
     command: |
+      # IMPORTANTE: Instalar jq primero (requerido en este step)
+      echo "Installing jq..."
+      apt-get update && apt-get install -y jq
+      
+      # Verificar instalación
+      jq --version
+      
       # Establecer variable de imagen con la versión completa
       export IMAGE_TAG="${REGISTRY}/${NAMESPACE}/${REPOSITORY}/${IMAGE_NAME}:v${VERSION}"
       echo "Using image tag: ${IMAGE_TAG}"
       
       # Obtener credenciales desde los secretos
+      echo "Getting credentials from secrets..."
       OCI_USERNAME=$(oci secrets secret-bundle get --secret-id $OCI_USERNAME_OCID --stage LATEST | jq -r '.data["secret-bundle-content"].content')
       OCI_AUTH_TOKEN=$(oci secrets secret-bundle get --secret-id $OCI_AUTH_TOKEN_OCID --stage LATEST | jq -r '.data["secret-bundle-content"].content')
       
       # Verificar que se obtuvieron las credenciales
       if [ -z "$OCI_USERNAME" ] || [ -z "$OCI_AUTH_TOKEN" ]; then
         echo "ERROR: No se pudieron obtener las credenciales para Docker login"
+        echo "OCI_USERNAME: [${OCI_USERNAME:+SET}]"
+        echo "OCI_AUTH_TOKEN: [${OCI_AUTH_TOKEN:+SET}]"
         exit 1
       fi
       
       echo "Credenciales obtenidas correctamente"
+      echo "Username: ${NAMESPACE}/${OCI_USERNAME}"
       
       # Login con credenciales explícitas
       echo "Logging in to Docker Registry..."
