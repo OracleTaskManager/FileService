@@ -10,6 +10,9 @@ env:
     REPOSITORY: "taskmanager"
     IMAGE_NAME: "file-service"
     VERSION: "4"  # Incrementado a 4
+    # Variables de secrets OCIDs - DEBES CONFIGURAR ESTAS EN EL BUILD PIPELINE
+    # OCI_USERNAME_OCID: "ocid1.vaultsecret.oc1.xxx"  # ID del secret OCI_USERNAME
+    # OCI_AUTH_TOKEN_OCID: "ocid1.vaultsecret.oc1.xxx"  # ID del secret OCI_AUTH_TOKEN
 
   exportedVariables:
     - IMAGE_FULL_NAME
@@ -58,7 +61,7 @@ steps:
       
       mkdir -p oci-keys
       
-      oci secrets secret-bundle get --secret-id $OCI_OBJECT_STORAGE_PRIVATE_KEY_OCID --stage LATEST | jq -r '.data["secret-bundle-content"].content' > oci-keys/oci-private-key.pem
+      oci secrets secret-bundle get --secret-id $OBJECT_STORAGE_PRIVATE_KEY_OCID --stage LATEST | jq -r '.data["secret-bundle-content"].content' > oci-keys/oci-private-key.pem
       
       chmod 600 oci-keys/oci-private-key.pem
       
@@ -193,7 +196,7 @@ steps:
     command: |
       # IMPORTANTE: Instalar jq primero (requerido en este step)
       echo "Installing jq..."
-      apt-get update && apt-get install -y jq
+      apt-get update && apt-get install -y jq curl
       
       # Verificar instalación
       jq --version
@@ -202,10 +205,45 @@ steps:
       export IMAGE_TAG="${REGISTRY}/${NAMESPACE}/${REPOSITORY}/${IMAGE_NAME}:v${VERSION}"
       echo "Using image tag: ${IMAGE_TAG}"
       
-      # Obtener credenciales desde los secretos
+      # Debug: Verificar variables de entorno de secrets
+      echo "Checking secret environment variables..."
+      echo "AUTH_TOKEN_OCID: ${AUTH_TOKEN_OCID:+SET}"
+      echo "USERNAME_OCID: ${USERNAME_OCID:+SET}"
+      
+      # Obtener credenciales desde los secretos con mejor manejo de errores
       echo "Getting credentials from secrets..."
-      OCI_USERNAME=$(oci secrets secret-bundle get --secret-id $OCI_USERNAME_OCID --stage LATEST | jq -r '.data["secret-bundle-content"].content')
-      OCI_AUTH_TOKEN=$(oci secrets secret-bundle get --secret-id $OCI_AUTH_TOKEN_OCID --stage LATEST | jq -r '.data["secret-bundle-content"].content')
+      
+      # Obtener username
+      echo "Getting OCI_USERNAME..."
+      OCI_USERNAME_RESPONSE=$(oci secrets secret-bundle get --secret-id $USERNAME_OCID --stage LATEST 2>&1)
+      if [ $? -ne 0 ]; then
+        echo "ERROR: Failed to get OCI_USERNAME secret"
+        echo "Response: $OCI_USERNAME_RESPONSE"
+        exit 1
+      fi
+      
+      OCI_USERNAME=$(echo "$OCI_USERNAME_RESPONSE" | jq -r '.data["secret-bundle-content"].content' 2>/dev/null)
+      if [ $? -ne 0 ]; then
+        echo "ERROR: Failed to parse OCI_USERNAME secret with jq"
+        echo "Raw response: $OCI_USERNAME_RESPONSE"
+        exit 1
+      fi
+      
+      # Obtener auth token
+      echo "Getting OCI_AUTH_TOKEN..."
+      OCI_AUTH_TOKEN_RESPONSE=$(oci secrets secret-bundle get --secret-id $AUTH_TOKEN_OCID --stage LATEST 2>&1)
+      if [ $? -ne 0 ]; then
+        echo "ERROR: Failed to get OCI_AUTH_TOKEN secret"
+        echo "Response: $OCI_AUTH_TOKEN_RESPONSE"
+        exit 1
+      fi
+      
+      OCI_AUTH_TOKEN=$(echo "$OCI_AUTH_TOKEN_RESPONSE" | jq -r '.data["secret-bundle-content"].content' 2>/dev/null)
+      if [ $? -ne 0 ]; then
+        echo "ERROR: Failed to parse OCI_AUTH_TOKEN secret with jq"
+        echo "Raw response: $OCI_AUTH_TOKEN_RESPONSE"
+        exit 1
+      fi
       
       # Verificar que se obtuvieron las credenciales
       if [ -z "$OCI_USERNAME" ] || [ -z "$OCI_AUTH_TOKEN" ]; then
