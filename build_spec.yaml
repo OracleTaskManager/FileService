@@ -1,0 +1,177 @@
+version: 0.1
+component: build
+timeoutInSeconds: 1000
+shell: bash
+
+env:
+  variables:
+    # Definir variables de entorno fijas
+    REGISTRY: "mx-queretaro-1.ocir.io"
+    NAMESPACE: "axfvmmw9g9lu"
+    REPOSITORY: "taskmanager"
+    IMAGE_NAME: "file-service"
+
+  exportedVariables:
+    - IMAGE_TAG
+    - IMAGE_FULL_NAME
+
+steps:
+  - type: Command
+    name: "Setup environment"
+    timeoutInSeconds: 60
+    command: |
+      # Establecer el tag de la imagen basado en la fecha
+      export IMAGE_TAG="v$(date '+%Y%m%d%H%M%S')"
+      echo "Using image tag: ${IMAGE_TAG}"
+      export IMAGE_FULL_NAME="${REGISTRY}/${NAMESPACE}/${REPOSITORY}/${IMAGE_NAME}:${IMAGE_TAG}"
+      echo "Full image name: ${IMAGE_FULL_NAME}"
+      
+      # Crear directorios necesarios
+      mkdir -p wallet oci-keys build/wallet build/oci-keys
+
+  - type: Command
+    name: "Setup wallet files"
+    timeoutInSeconds: 300
+    command: |
+      # Obtener y guardar los archivos wallet desde los secretos
+      echo "Creating wallet files from secrets..."
+      
+      # Para archivos binarios (necesitan decodificación base64)
+      oci secrets secret-bundle get --secret-id $WALLET_CWALLET_SSO_OCID --stage LATEST | jq -r '.data["secret-bundle-content"].content' | base64 -d > wallet/cwallet.sso
+      oci secrets secret-bundle get --secret-id $WALLET_EWALLET_P12_OCID --stage LATEST | jq -r '.data["secret-bundle-content"].content' | base64 -d > wallet/ewallet.p12
+      oci secrets secret-bundle get --secret-id $WALLET_KEYSTORE_JKS_OCID --stage LATEST | jq -r '.data["secret-bundle-content"].content' | base64 -d > wallet/keystore.jks
+      oci secrets secret-bundle get --secret-id $WALLET_TRUSTSTORE_JKS_OCID --stage LATEST | jq -r '.data["secret-bundle-content"].content' | base64 -d > wallet/truststore.jks
+      
+      # Para archivos de texto (no necesitan decodificación)
+      oci secrets secret-bundle get --secret-id $WALLET_TNSNAMES_ORA_OCID --stage LATEST | jq -r '.data["secret-bundle-content"].content' > wallet/tnsnames.ora
+      oci secrets secret-bundle get --secret-id $WALLET_SQLNET_ORA_OCID --stage LATEST | jq -r '.data["secret-bundle-content"].content' > wallet/sqlnet.ora
+      oci secrets secret-bundle get --secret-id $WALLET_OJDBC_PROPERTIES_OCID --stage LATEST | jq -r '.data["secret-bundle-content"].content' > wallet/ojdbc.properties
+      oci secrets secret-bundle get --secret-id $WALLET_EWALLET_PEM_OCID --stage LATEST | jq -r '.data["secret-bundle-content"].content' > wallet/ewallet.pem
+      oci secrets secret-bundle get --secret-id $WALLET_README_OCID --stage LATEST | jq -r '.data["secret-bundle-content"].content' > wallet/README
+      
+      # Establecer permisos correctos
+      chmod 600 wallet/*
+      
+      # Verificar archivos
+      ls -la wallet/
+
+  - type: Command
+    name: "Setup OCI Object Storage keys"
+    timeoutInSeconds: 120
+    command: |
+      # Obtener clave privada para Object Storage
+      echo "Creating OCI Object Storage key from secret..."
+      
+      oci secrets secret-bundle get --secret-id $OCI_OBJECT_STORAGE_PRIVATE_KEY_OCID --stage LATEST | jq -r '.data["secret-bundle-content"].content' > oci-keys/oci-private-key.pem
+      
+      # Establecer permisos correctos
+      chmod 600 oci-keys/oci-private-key.pem
+      
+      # Verificar archivo
+      ls -la oci-keys/
+
+  - type: Command
+    name: "Modify application.properties"
+    timeoutInSeconds: 60
+    command: |
+      # Modificar paths en application.properties
+      echo "Updating application.properties..."
+      
+      sed -i 's|TNS_ADMIN=C:/Users/cesar/Wallet_TelegramBotDatabase|TNS_ADMIN=/wallet|g' src/main/resources/application.properties
+      sed -i 's|oci.private-key-path=${OCI_PRIVATE_KEY_PATH:C:/Users/cesar/ObjectStorageKeys/a01281202@tec.mx_2025-03-22T10_08_12.916Z.pem}|oci.private-key-path=/oci-keys/oci-private-key.pem|g' src/main/resources/application.properties
+      
+      # Verificar cambios
+      cat src/main/resources/application.properties
+
+  - type: Command
+    name: "Build with Maven"
+    timeoutInSeconds: 600
+    command: |
+      # Compilar con Maven
+      echo "Building with Maven..."
+      
+      mvn clean package -DskipTests
+      
+      # Verificar resultado
+      ls -la target/
+
+  - type: Command
+    name: "Prepare for Docker build"
+    timeoutInSeconds: 120
+    command: |
+      # Preparar archivos para Docker build
+      echo "Preparing files for Docker build..."
+      
+      # Copiar JAR
+      cp target/FileService-0.0.1-SNAPSHOT.jar build/
+      
+      # Copiar wallet y claves
+      cp -r wallet/* build/wallet/
+      cp -r oci-keys/* build/oci-keys/
+      
+      # Crear Dockerfile
+      cat > Dockerfile << EOF
+      FROM eclipse-temurin:17-jre
+
+      # Establecer directorio de trabajo
+      WORKDIR /app
+
+      # Crear directorios
+      RUN mkdir -p /wallet /oci-keys
+
+      # Copiar JAR y archivos necesarios
+      COPY build/FileService-0.0.1-SNAPSHOT.jar /app/app.jar
+      COPY build/wallet/ /wallet/
+      COPY build/oci-keys/ /oci-keys/
+
+      # Establecer permisos explícitos
+      RUN chmod 755 /app/app.jar
+      RUN chmod 600 /wallet/* /oci-keys/*
+
+      # Configurar variables de entorno
+      ENV TNS_ADMIN=/wallet
+      ENV ORACLE_HOME=/wallet
+      ENV LD_LIBRARY_PATH=/wallet
+      ENV OCI_PRIVATE_KEY_PATH=/oci-keys/oci-private-key.pem
+
+      # Puerto de la aplicación
+      EXPOSE 8082
+
+      # Comando de inicio
+      ENTRYPOINT ["java", "-Djava.security.egd=file:/dev/./urandom", "-jar", "/app/app.jar"]
+      EOF
+
+  - type: Command
+    name: "Build and push Docker image"
+    timeoutInSeconds: 900
+    command: |
+      # Autenticarse en el registry
+      echo "Logging in to Oracle Container Registry..."
+      
+      # Obtener credenciales desde los secretos
+      OCI_USERNAME=$(oci secrets secret-bundle get --secret-id $OCI_USERNAME_OCID --stage LATEST | jq -r '.data["secret-bundle-content"].content')
+      OCI_AUTH_TOKEN=$(oci secrets secret-bundle get --secret-id $OCI_AUTH_TOKEN_OCID --stage LATEST | jq -r '.data["secret-bundle-content"].content')
+      
+      # Login
+      echo "${OCI_AUTH_TOKEN}" | docker login ${REGISTRY} -u ${NAMESPACE}/${OCI_USERNAME} --password-stdin
+      
+      # Construir imagen
+      echo "Building Docker image..."
+      docker build --no-cache -t ${IMAGE_FULL_NAME} -f Dockerfile .
+      
+      # Verificar imagen
+      docker images | grep ${IMAGE_NAME}
+      
+      # Subir imagen
+      echo "Pushing image to registry..."
+      docker push ${IMAGE_FULL_NAME}
+      
+      echo "============================================"
+      echo "Image successfully built and pushed!"
+      echo "Image: ${IMAGE_FULL_NAME}"
+      echo "============================================"
+
+outputArtifacts:
+  - name: file-service-image
+    type: DOCKER_IMAGE
+    location: ${IMAGE_FULL_NAME}
