@@ -15,19 +15,25 @@ env:
 
 steps:
   - type: Command
-    name: "Setup environment"
-    timeoutInSeconds: 60
+    name: "Install required tools"
+    timeoutInSeconds: 120
     command: |
-      # Generar versión automáticamente basada en timestamp (sin el prefijo "v")
-      VERSION="$(date '+%Y%m%d%H%M%S')"
-      echo "Generated version: ${VERSION}"
+      # Instalar jq para procesar JSON
+      apt-get update && apt-get install -y jq
       
-      # Definir la imagen completa (añadiendo el prefijo "v" aquí)
+      # Verificar instalación
+      jq --version
+      
+      # Version de la imagen
+      VERSION="$(date '+%Y%m%d%H%M%S')"
+      echo "Using version: ${VERSION}"
+      
+      # Configurar variable de imagen
       export IMAGE_FULL_NAME="${REGISTRY}/${NAMESPACE}/${REPOSITORY}/${IMAGE_NAME}:v${VERSION}"
       echo "Using image: ${IMAGE_FULL_NAME}"
 
   - type: Command
-    name: "Recreate wallet files"
+    name: "Recreate wallet files from secrets"
     timeoutInSeconds: 300
     command: |
       # Crear el directorio de wallet
@@ -36,7 +42,7 @@ steps:
       # Obtener y guardar los archivos wallet desde los secretos
       echo "Creating wallet files from secrets..."
       
-      # Para archivos binarios (necesitan decodificación base64)
+      # Decodificar los secretos y crear los archivos
       oci secrets secret-bundle get --secret-id $WALLET_CWALLET_SSO_OCID --stage LATEST | jq -r '.data["secret-bundle-content"].content' | base64 -d > wallet/cwallet.sso
       oci secrets secret-bundle get --secret-id $WALLET_TNSNAMES_ORA_OCID --stage LATEST | jq -r '.data["secret-bundle-content"].content' > wallet/tnsnames.ora
       oci secrets secret-bundle get --secret-id $WALLET_SQLNET_ORA_OCID --stage LATEST | jq -r '.data["secret-bundle-content"].content' > wallet/sqlnet.ora
@@ -50,10 +56,8 @@ steps:
       # Establecer permisos correctos
       chmod 600 wallet/*
       
-      # Crear directorio para OCI keys
       mkdir -p oci-keys
       
-      # Obtener clave privada para Object Storage
       oci secrets secret-bundle get --secret-id $OCI_OBJECT_STORAGE_PRIVATE_KEY_OCID --stage LATEST | jq -r '.data["secret-bundle-content"].content' > oci-keys/oci-private-key.pem
       
       chmod 600 oci-keys/oci-private-key.pem
@@ -67,12 +71,16 @@ steps:
       head -3 oci-keys/oci-private-key.pem
 
   - type: Command
+    name: "Set up JDK"
+    timeoutInSeconds: 60
+    command: |
+      # Verificar la versión de Java ya instalada
+      java -version
+
+  - type: Command
     name: "Modify application.properties"
     timeoutInSeconds: 60
     command: |
-      # Modificar paths en application.properties
-      echo "Updating application.properties..."
-      
       sed -i 's|TNS_ADMIN=C:/Users/cesar/Wallet_TelegramBotDatabase|TNS_ADMIN=/wallet|g' src/main/resources/application.properties
       # Verificar el cambio
       cat src/main/resources/application.properties
@@ -84,20 +92,14 @@ steps:
     name: "Build with Maven"
     timeoutInSeconds: 600
     command: |
-      # Compilar con Maven
-      echo "Building with Maven..."
-      
+      # Compilar con Maven - exactamente como en GitHub Actions
       mvn clean package -DskipTests
-      
-      # Verificar resultado
-      echo "Maven build completed. Checking target directory:"
-      ls -la target/
 
   - type: Command
     name: "Prepare for Docker build"
     timeoutInSeconds: 120
     command: |
-      # Preparar archivos para Docker build
+      # Seguir exactamente los pasos del GitHub Actions
       mkdir -p build
 
       echo "Contenido del directorio target:"
@@ -166,30 +168,28 @@ steps:
       cat Dockerfile
 
   - type: Command
-    name: "Build and push Docker image"
+    name: "Build and Push Docker image"
     timeoutInSeconds: 900
     command: |
-      # Autenticarse en el registry
-      echo "Logging in to Oracle Container Registry..."
+      # Exactamente como en GitHub Actions
+      echo "Construyendo imagen Docker..."
       
-      # Obtener credenciales desde los secretos
+      # Obtener credenciales desde los secretos para login
       OCI_USERNAME=$(oci secrets secret-bundle get --secret-id $OCI_USERNAME_OCID --stage LATEST | jq -r '.data["secret-bundle-content"].content')
       OCI_AUTH_TOKEN=$(oci secrets secret-bundle get --secret-id $OCI_AUTH_TOKEN_OCID --stage LATEST | jq -r '.data["secret-bundle-content"].content')
       
-      # Login
+      # Login no interactivo
       echo "${OCI_AUTH_TOKEN}" | docker login ${REGISTRY} -u ${NAMESPACE}/${OCI_USERNAME} --password-stdin
       
-      # Construir imagen
-      echo "Construyendo imagen Docker..."
-      docker build --no-cache -t ${IMAGE_FULL_NAME} -f Dockerfile .
+      # Construir con el tag completo
+      IMAGE_TAG="${REGISTRY}/${NAMESPACE}/${REPOSITORY}/${IMAGE_NAME}:v${VERSION}"
+      docker build --no-cache -t ${IMAGE_TAG} -f Dockerfile .
       
-      # Verificar imagen
       echo "Verificando la imagen construida..."
       docker images
       
-      # Probar la imagen localmente
       echo "Probando la imagen localmente..."
-      docker run --name test-container -d ${IMAGE_FULL_NAME}
+      docker run --name test-container -d ${IMAGE_TAG}
       
       echo "Logs del contenedor de prueba (primeros 10 segundos):"
       sleep 10
@@ -198,10 +198,12 @@ steps:
       echo "Limpiando contenedor de prueba..."
       docker rm -f test-container || echo "Error al eliminar contenedor"
       
-      # Subir imagen
       echo "Subiendo imagen a registry..."
-      docker push ${IMAGE_FULL_NAME}
+      docker push ${IMAGE_TAG}
       
+      # Establecer la variable exportada
+      export IMAGE_FULL_NAME="${IMAGE_TAG}"
+
       echo "============================================"
       echo "Image successfully built and pushed!"
       echo "Image: ${IMAGE_FULL_NAME}"
