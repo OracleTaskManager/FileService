@@ -16,7 +16,6 @@ env:
 
   exportedVariables:
     - IMAGE_FULL_NAME
-    - VERSION
 
 steps:
   - type: Command
@@ -24,23 +23,19 @@ steps:
     timeoutInSeconds: 60
     command: |
       # Generar versión automática basada en fecha y hora
-      VERSION="$(date +'%Y%m%d-%H%M%S')"
+      export VERSION="$(date +'%Y%m%d-%H%M%S')"
       echo "Generated version: $VERSION"
       
       # También agregar commit hash si está disponible
       if [ -d ".git" ]; then
         COMMIT_SHORT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-        VERSION="${VERSION}-${COMMIT_SHORT}"
+        export VERSION="${VERSION}-${COMMIT_SHORT}"
         echo "Version with commit: $VERSION"
       fi
       
       # Establecer variable de imagen con la versión automática
-      IMAGE_TAG="${REGISTRY}/${NAMESPACE}/${REPOSITORY}/${IMAGE_NAME}:${VERSION}"
+      export IMAGE_TAG="${REGISTRY}/${NAMESPACE}/${REPOSITORY}/${IMAGE_NAME}:${VERSION}"
       echo "Image tag: ${IMAGE_TAG}"
-      
-      # Exportar variables para que estén disponibles en los siguientes steps
-      echo "VERSION=${VERSION}" >> $OCI_EXPORT_VARIABLES
-      echo "IMAGE_TAG=${IMAGE_TAG}" >> $OCI_EXPORT_VARIABLES
   - type: Command
     name: "Install required tools"
     timeoutInSeconds: 120
@@ -270,7 +265,7 @@ steps:
     timeoutInSeconds: 900
     command: |
       # Usar la versión generada en el step anterior
-      IMAGE_TAG="${REGISTRY}/${NAMESPACE}/${REPOSITORY}/${IMAGE_NAME}:${VERSION}"
+      export IMAGE_TAG="${REGISTRY}/${NAMESPACE}/${REPOSITORY}/${IMAGE_NAME}:${VERSION}"
       echo "Using image tag: ${IMAGE_TAG}"
       
       # Debug: Verificar variables de entorno de secrets
@@ -377,14 +372,9 @@ steps:
       
       echo "Docker push exitoso"
       
-      # Establecer las variables exportadas para el Deployment Pipeline
-      IMAGE_FULL_NAME="${IMAGE_TAG}"
+      # Establecer la variable exportada para el Deployment Pipeline
+      export IMAGE_FULL_NAME="${IMAGE_TAG}"
       echo "IMAGE_FULL_NAME=${IMAGE_FULL_NAME}"
-      echo "VERSION=${VERSION}"
-      
-      # Exportar variables
-      echo "IMAGE_FULL_NAME=${IMAGE_FULL_NAME}" >> $OCI_EXPORT_VARIABLES
-      echo "VERSION=${VERSION}" >> $OCI_EXPORT_VARIABLES
 
       echo "============================================"
       echo "Image successfully built and pushed!"
