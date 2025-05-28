@@ -9,13 +9,13 @@ env:
     NAMESPACE: "axfvmmw9g9lu"
     REPOSITORY: "taskmanager"
     IMAGE_NAME: "file-service"
+    VERSION: "4"  # Incrementado a 4
     # Variables de secrets OCIDs - DEBES CONFIGURAR ESTAS EN EL BUILD PIPELINE
     # OCI_USERNAME_OCID: "ocid1.vaultsecret.oc1.xxx"  # ID del secret OCI_USERNAME
     # OCI_AUTH_TOKEN_OCID: "ocid1.vaultsecret.oc1.xxx"  # ID del secret OCI_AUTH_TOKEN
 
   exportedVariables:
     - IMAGE_FULL_NAME
-    - VERSION
 
 steps:
   - type: Command
