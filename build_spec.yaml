@@ -33,6 +33,34 @@ steps:
       echo "Using image: ${IMAGE_FULL_NAME}"
 
   - type: Command
+    name: "Debug secrets first"
+    timeoutInSeconds: 300
+    command: |
+      echo "=== DEBUGGING SECRETS ==="
+      
+      # Probar con uno de los secrets del wallet primero
+      echo "Testing WALLET_TNSNAMES_ORA_OCID..."
+      echo "OCID: $WALLET_TNSNAMES_ORA_OCID"
+      
+      # Método 1: Sin query, ver respuesta completa
+      echo "--- Method 1: Full response ---"
+      oci secrets secret-bundle get --secret-id $WALLET_TNSNAMES_ORA_OCID --stage LATEST 2>&1 || echo "Failed method 1"
+      
+      echo -e "\n--- Method 2: With query ---"
+      oci secrets secret-bundle get --secret-id $WALLET_TNSNAMES_ORA_OCID --stage LATEST --query 'data."secret-bundle-content".content' --raw-output 2>&1 || echo "Failed method 2"
+      
+      echo -e "\n--- Method 3: Testing USERNAME_OCID ---"
+      oci secrets secret-bundle get --secret-id $USERNAME_OCID --stage LATEST 2>&1 || echo "Failed method 3"
+      
+      echo -e "\n--- Method 4: List secrets to verify access ---"
+      oci secrets secret list --compartment-id $(oci iam compartment list --query 'data[0].id' --raw-output) --limit 5 2>&1 || echo "Failed to list secrets"
+      
+      echo -e "\n--- Method 5: Check current user identity ---"
+      oci iam user get --user-id $(oci iar user-management user get-current-user --query 'data.id' --raw-output 2>/dev/null) 2>&1 || echo "Failed to get current user"
+      
+      echo "=== END DEBUG ==="
+
+  - type: Command
     name: "Recreate wallet files from secrets"
     timeoutInSeconds: 300
     command: |
