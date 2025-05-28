@@ -9,15 +9,33 @@ env:
     NAMESPACE: "axfvmmw9g9lu"
     REPOSITORY: "taskmanager"
     IMAGE_NAME: "file-service"
-    VERSION: "4"  # Incrementado a 4
     # Variables de secrets OCIDs - DEBES CONFIGURAR ESTAS EN EL BUILD PIPELINE
     # OCI_USERNAME_OCID: "ocid1.vaultsecret.oc1.xxx"  # ID del secret OCI_USERNAME
     # OCI_AUTH_TOKEN_OCID: "ocid1.vaultsecret.oc1.xxx"  # ID del secret OCI_AUTH_TOKEN
 
   exportedVariables:
     - IMAGE_FULL_NAME
+    - VERSION
 
 steps:
+  - type: Command
+    name: "Generate version"
+    timeoutInSeconds: 60
+    command: |
+      # Generar versión automática basada en fecha y hora
+      export VERSION="$(date +'%Y%m%d-%H%M%S')"
+      echo "Generated version: $VERSION"
+      
+      # También agregar commit hash si está disponible
+      if [ -d ".git" ]; then
+        COMMIT_SHORT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+        export VERSION="${VERSION}-${COMMIT_SHORT}"
+        echo "Version with commit: $VERSION"
+      fi
+      
+      # Establecer variable de imagen con la versión automática
+      export IMAGE_TAG="${REGISTRY}/${NAMESPACE}/${REPOSITORY}/${IMAGE_NAME}:${VERSION}"
+      echo "Image tag: ${IMAGE_TAG}"
   - type: Command
     name: "Install required tools"
     timeoutInSeconds: 120
@@ -246,8 +264,8 @@ steps:
     name: "Build and Push Docker image"
     timeoutInSeconds: 900
     command: |
-      # Establecer variable de imagen con la versión completa
-      export IMAGE_TAG="${REGISTRY}/${NAMESPACE}/${REPOSITORY}/${IMAGE_NAME}:v${VERSION}"
+      # Usar la versión generada en el step anterior
+      export IMAGE_TAG="${REGISTRY}/${NAMESPACE}/${REPOSITORY}/${IMAGE_NAME}:${VERSION}"
       echo "Using image tag: ${IMAGE_TAG}"
       
       # Debug: Verificar variables de entorno de secrets
