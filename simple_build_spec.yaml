@@ -1,0 +1,33 @@
+version: 0.1
+component: build
+timeoutInSeconds: 300
+shell: bash
+
+steps:
+  - type: Command
+    name: "Test basic functionality"
+    timeoutInSeconds: 60
+    command: |
+      echo "=== BUILD SERVICE DEBUG ==="
+      echo "Current directory:"
+      pwd
+      
+      echo "Files in current directory:"
+      ls -la
+      
+      echo "Environment variables:"
+      env | grep -E "(OCID|SECRET)" | head -10 || echo "No secret variables found"
+      
+      echo "Java version:"
+      java -version || echo "Java not found"
+      
+      echo "Maven version:"
+      mvn -version || echo "Maven not found"
+      
+      echo "Docker version:"
+      docker --version || echo "Docker not found"
+      
+      echo "OCI CLI version:"
+      oci --version || echo "OCI CLI not found"
+      
+      echo "=== TEST COMPLETED SUCCESSFULLY ==="
