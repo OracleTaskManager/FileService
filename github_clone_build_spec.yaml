@@ -1,0 +1,25 @@
+version: 0.1
+component: build
+timeoutInSeconds: 300
+shell: bash
+
+# Solo clona el código fuente, sin construir nada
+steps:
+  - type: Command
+    name: "Clone repository"
+    timeoutInSeconds: 60
+    command: |
+      echo "Repository cloned successfully by DevOps service"
+      echo "Source code available for next stage"
+      
+      # Verificar que el código esté disponible
+      ls -la
+      
+      # Verificar estructura del proyecto
+      if [ -f "pom.xml" ]; then
+        echo "✅ Maven project detected"
+      fi
+      
+      if [ -d "src" ]; then
+        echo "✅ Source code directory found"
+      fi
