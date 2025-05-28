@@ -387,4 +387,4 @@ steps:
 outputArtifacts:
   - name: file-service-image
     type: DOCKER_IMAGE
-    location: ${IMAGE_FULL_NAME}
+    location: mx-queretaro-1.ocir.io/axfvmmw9g9lu/taskmanager/file-service:${VERSION}
