@@ -3,10 +3,10 @@ component: build
 timeoutInSeconds: 300
 shell: bash
 
-# Clona el código fuente y lo prepara para el siguiente stage
+# Solo clona el código fuente, sin construir nada
 steps:
   - type: Command
-    name: "Clone and prepare source"
+    name: "Clone repository"
     timeoutInSeconds: 60
     command: |
       echo "Repository cloned successfully by DevOps service"
@@ -23,15 +23,3 @@ steps:
       if [ -d "src" ]; then
         echo "✅ Source code directory found"
       fi
-      
-      # Crear un archivo zip con todo el código fuente para pasarlo al siguiente stage
-      echo "Preparing source code for next stage..."
-      tar -czf source-code.tar.gz --exclude='.git' --exclude='target' .
-      
-      echo "Source code packaged successfully"
-      ls -la source-code.tar.gz
-
-outputArtifacts:
-  - name: source-code
-    type: BINARY
-    location: source-code.tar.gz
