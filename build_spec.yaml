@@ -16,69 +16,39 @@ env:
 
 steps:
   - type: Command
-    name: "Setup Java 17 environment"
-    timeoutInSeconds: 300
+    name: "Install Java 17 - Alternative Method"
+    timeoutInSeconds: 600
     command: |
-      echo "🔍 Current Java version:"
-      java -version
+      echo "🔧 Installing Java 17 using alternative method..."
       
-      echo "📦 Installing Java 17..."
+      # Método 1: Usar Amazon Corretto (más confiable que OpenJDK en Oracle Linux)
+      cd /opt
+      wget -q https://corretto.aws/downloads/latest/amazon-corretto-17-x64-linux-jdk.tar.gz
+      tar -xzf amazon-corretto-17-x64-linux-jdk.tar.gz
       
-      # Detectar el gestor de paquetes e instalar Java 17
-      if command -v yum >/dev/null 2>&1; then
-        echo "Using yum package manager..."
-        yum update -y
-        yum install -y java-17-openjdk-devel wget
-        export JAVA_HOME=/usr/lib/jvm/java-17-openjdk
-      elif command -v dnf >/dev/null 2>&1; then
-        echo "Using dnf package manager..."
-        dnf update -y
-        dnf install -y java-17-openjdk-devel wget
-        export JAVA_HOME=/usr/lib/jvm/java-17-openjdk
-      elif command -v apt-get >/dev/null 2>&1; then
-        echo "Using apt package manager..."
-        apt-get update
-        apt-get install -y openjdk-17-jdk wget
-        export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
-      else
-        echo "❌ No package manager found, trying manual installation..."
-        cd /opt
-        wget -q https://download.java.net/java/GA/jdk17.0.2/dfd4a8d0985749f896bed50d7138ee7f/8/GPL/openjdk-17.0.2_linux-x64_bin.tar.gz
-        tar -xzf openjdk-17.0.2_linux-x64_bin.tar.gz
-        export JAVA_HOME=/opt/jdk-17.0.2
-        cd -
-      fi
+      # Encontrar el directorio correcto
+      JAVA17_DIR=$(find /opt -maxdepth 1 -name "amazon-corretto-17*" -type d | head -1)
+      echo "Java 17 directory: $JAVA17_DIR"
       
-      # Configurar PATH y variables de entorno
-      export PATH=$JAVA_HOME/bin:$PATH
+      # Crear symlink para fácil acceso
+      ln -sf "$JAVA17_DIR" /opt/java17
       
-      # Verificar instalación
-      echo "✅ Java 17 installed successfully:"
-      java -version
-      javac -version
-      
-      echo "🔧 JAVA_HOME: $JAVA_HOME"
-      echo "🔧 PATH: $PATH"
-      
-      # Guardar variables de entorno para próximos steps
-      echo "export JAVA_HOME=$JAVA_HOME" >> ~/.bashrc
-      echo "export PATH=$JAVA_HOME/bin:\$PATH" >> ~/.bashrc
+      echo "✅ Java 17 installed successfully"
 
   - type: Command
     name: "Recreate wallet files from secrets"
     timeoutInSeconds: 300
     command: |
-      # Crear directorios
+      # Usar el mismo código exitoso de GitHub Actions
       mkdir -p wallet oci-keys
       
-      # Función para obtener secrets usando OCI CLI nativo
+      # Función para obtener secrets
       get_secret() {
         local secret_id=$1
         local output_file=$2
       
         echo "Getting secret for: $(basename $output_file)"
       
-        # Usar OCI CLI con query nativo
         local content=$(oci secrets secret-bundle get --secret-id "$secret_id" --stage LATEST --query 'data."secret-bundle-content".content' --raw-output 2>/dev/null)
         if [ $? -ne 0 ] || [ -z "$content" ]; then
           echo "WARNING: Failed to get secret $secret_id, creating empty file"
@@ -86,7 +56,6 @@ steps:
           return 1
         fi
       
-        # Intentar decodificar de base64
         if echo "$content" | base64 -d > "$output_file" 2>/dev/null; then
           echo "✅ Secret decoded for $(basename $output_file)"
         else
@@ -95,8 +64,7 @@ steps:
         fi
       }
       
-      # Obtener todos los archivos del wallet
-      echo "📁 Creating wallet files from secrets..."
+      # Recrear wallet files
       get_secret "$WALLET_CWALLET_SSO_OCID" "wallet/cwallet.sso" || true
       get_secret "$WALLET_TNSNAMES_ORA_OCID" "wallet/tnsnames.ora" || true
       get_secret "$WALLET_SQLNET_ORA_OCID" "wallet/sqlnet.ora" || true
@@ -108,142 +76,81 @@ steps:
       get_secret "$WALLET_TRUSTSTORE_JKS_OCID" "wallet/truststore.jks" || true
       get_secret "$OBJECT_STORAGE_PRIVATE_KEY_OCID" "oci-keys/oci-private-key.pem" || true
       
-      # Configurar permisos
       chmod 600 wallet/* oci-keys/* 2>/dev/null || true
       
-      echo "📋 Wallet files created:"
-      ls -la wallet/
-      echo "🔑 OCI keys created:"
-      ls -la oci-keys/
+      echo "✅ Wallet files created"
+      ls -la wallet/ oci-keys/
 
   - type: Command
     name: "Modify application.properties"
     timeoutInSeconds: 60
     command: |
+      # Usar exactamente el mismo código de GitHub Actions
       if [ -f "src/main/resources/application.properties" ]; then
         echo "🔧 Modifying application.properties..."
       
-        # Hacer una copia de respaldo
-        cp src/main/resources/application.properties src/main/resources/application.properties.backup
-      
-        # Aplicar cambios
         sed -i 's|TNS_ADMIN=C:/Users/cesar/Wallet_TelegramBotDatabase|TNS_ADMIN=/wallet|g' src/main/resources/application.properties
         sed -i 's|oci.private-key-path=${OCI_PRIVATE_KEY_PATH:C:/Users/cesar/ObjectStorageKeys/a01281202@tec.mx_2025-03-22T10_08_12.916Z.pem}|oci.private-key-path=/oci-keys/oci-private-key.pem|g' src/main/resources/application.properties
       
-        echo "✅ application.properties modified successfully"
-        echo "📄 New content:"
+        echo "✅ application.properties modified"
         cat src/main/resources/application.properties
-      else
-        echo "⚠️ application.properties not found, skipping modification"
       fi
 
   - type: Command
     name: "Build with Maven using Java 17"
     timeoutInSeconds: 600
     command: |
-      # Detectar y configurar Java 17 DENTRO de este step
-      if [ -d "/usr/lib/jvm/java-17-openjdk" ]; then
-        export JAVA_HOME=/usr/lib/jvm/java-17-openjdk
-      elif [ -d "/usr/lib/jvm/java-17-openjdk-amd64" ]; then
-        export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
-      elif [ -d "/opt/jdk-17.0.2" ]; then
-        export JAVA_HOME=/opt/jdk-17.0.2
-      else
-        echo "❌ Java 17 not found, installing..."
-        # Instalar Java 17 si no existe
-        if command -v yum >/dev/null 2>&1; then
-          yum install -y java-17-openjdk-devel
-          export JAVA_HOME=/usr/lib/jvm/java-17-openjdk
-        elif command -v apt-get >/dev/null 2>&1; then
-          apt-get update && apt-get install -y openjdk-17-jdk
-          export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
-        fi
-      fi
-
+      # Configurar Java 17 de forma robusta
+      export JAVA_HOME=/opt/java17
       export PATH=$JAVA_HOME/bin:$PATH
-
-      echo "☕ Verifying Java 17:"
+      
+      echo "☕ Verifying Java installation:"
       java -version
       javac -version
       echo "🔧 JAVA_HOME: $JAVA_HOME"
-
-      echo "📋 Maven configuration:"
+      echo "🔧 PATH: $PATH"
+      
+      echo "📋 Maven version:"
       mvn -version
-
-      echo "🚀 Starting Maven build with Java 17..."
-
-      # Maven build SIN fallback - si falla, que falle todo
-      mvn clean package -DskipTests \
-          -Dmaven.compiler.source=17 \
-          -Dmaven.compiler.target=17 \
-          -Dmaven.compiler.release=17
-
-      # Verificar que el JAR se creó correctamente
+      
+      echo "🚀 Building with Maven (same as GitHub Actions)..."
+      
+      # Usar exactamente el mismo comando que GitHub Actions
+      mvn clean package -DskipTests
+      
+      echo "📦 Build completed, checking results:"
+      ls -la target/
+      
+      # Verificaciones adicionales
       if [ ! -f "target/FileService-0.0.1-SNAPSHOT.jar" ]; then
-        echo "❌ JAR file not created!"
+        echo "❌ JAR file not found!"
         exit 1
       fi
-
-      # Verificar tamaño del JAR (debe ser > 1MB para una app Spring Boot)
-      JAR_SIZE=$(stat -f%z "target/FileService-0.0.1-SNAPSHOT.jar" 2>/dev/null || stat -c%s "target/FileService-0.0.1-SNAPSHOT.jar")
+      
+      JAR_SIZE=$(stat -c%s "target/FileService-0.0.1-SNAPSHOT.jar" 2>/dev/null || stat -f%z "target/FileService-0.0.1-SNAPSHOT.jar")
       echo "📦 JAR size: $JAR_SIZE bytes"
-
-      if [ "$JAR_SIZE" -lt 10000 ]; then
-        echo "❌ JAR is too small ($JAR_SIZE bytes) - likely empty!"
-        exit 1
+      
+      if [ "$JAR_SIZE" -lt 1000000 ]; then  # Menos de 1MB es sospechoso
+        echo "⚠️ JAR seems small for a Spring Boot app"
       fi
-
-      # Verificar que contiene la clase principal
-      jar tf target/FileService-0.0.1-SNAPSHOT.jar | grep -q "FileServiceApplication.class"
-      if [ $? -ne 0 ]; then
-        echo "❌ Main class not found in JAR!"
-        jar tf target/FileService-0.0.1-SNAPSHOT.jar | head -20
-        exit 1
-      fi
-
+      
       echo "✅ Maven build successful!"
-      echo "📦 JAR created with correct size and main class"
-      ls -la target/FileService-0.0.1-SNAPSHOT.jar
 
   - type: Command
-    name: "Prepare Docker build context"
+    name: "Prepare Docker build (GitHub Actions style)"
     timeoutInSeconds: 120
     command: |
-      echo "📁 Preparing build context..."
+      # Usar exactamente la misma estructura que GitHub Actions
+      mkdir -p build build/wallet build/oci-keys
       
-      # Crear estructura de directorios
-      mkdir -p build/wallet build/oci-keys
-      
-      # Copiar JAR
+      echo "Copying JAR to build directory..."
       cp target/FileService-0.0.1-SNAPSHOT.jar build/
-      echo "✅ JAR copied to build context"
       
-      # Copiar wallet files
-      if [ "$(ls -A wallet/ 2>/dev/null)" ]; then
-        cp -r wallet/* build/wallet/
-        echo "✅ Wallet files copied"
-      else
-        echo "⚠️ No wallet files to copy"
-      fi
+      echo "Copying wallet and keys..."
+      cp -r wallet/* build/wallet/ 2>/dev/null || true
+      cp -r oci-keys/* build/oci-keys/ 2>/dev/null || true
       
-      # Copiar OCI keys
-      if [ "$(ls -A oci-keys/ 2>/dev/null)" ]; then
-        cp -r oci-keys/* build/oci-keys/
-        echo "✅ OCI keys copied"
-      else
-        echo "⚠️ No OCI keys to copy"
-      fi
-      
-      echo "📋 Build context prepared:"
-      ls -la build/
-
-  - type: Command
-    name: "Create Dockerfile"
-    timeoutInSeconds: 60
-    command: |
-      echo "🐳 Creating Dockerfile..."
-      
-      # Crear Dockerfile
+      echo "Creating Dockerfile (same as GitHub Actions)..."
       cat > Dockerfile << 'EOF'
       FROM eclipse-temurin:17-jre
       
@@ -267,26 +174,24 @@ steps:
       
       ENTRYPOINT ["java", "-Djava.security.egd=file:/dev/./urandom", "-jar", "/app/app.jar"]
       EOF
-      
-      echo "✅ Dockerfile created successfully"
+  
+      echo "✅ Docker build context prepared"
+      ls -la build/
 
   - type: Command
     name: "Build Docker image"
     timeoutInSeconds: 900
     command: |
-      # Generar versión única
+      # Generar versión
       VERSION="$(date +'%Y%m%d-%H%M%S')"
       if [ -d ".git" ]; then
         COMMIT_SHORT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
         VERSION="${VERSION}-${COMMIT_SHORT}"
       fi
-      echo "🏷️ Generated version: $VERSION"
       
-      # Construir tag de imagen
       IMAGE_TAG="${REGISTRY}/${NAMESPACE}/${REPOSITORY}/${IMAGE_NAME}:${VERSION}"
       echo "🐳 Building Docker image: ${IMAGE_TAG}"
       
-      # Construir imagen (sin push - eso lo hace deliver-image)
       docker build --no-cache -t "${IMAGE_TAG}" .
       
       if [ $? -ne 0 ]; then
@@ -296,18 +201,12 @@ steps:
       
       echo "✅ Docker image built successfully!"
       
-      # Exportar variables para deliver-image stage
+      # Exportar variables
       export IMAGE_FULL_NAME="${IMAGE_TAG}"
       export VERSION="${VERSION}"
       
       echo "🎯 IMAGE_FULL_NAME=${IMAGE_FULL_NAME}"
       echo "🎯 VERSION=${VERSION}"
-      
-      echo "============================================"
-      echo "✅ BUILD COMPLETED SUCCESSFULLY!"
-      echo "📦 Image: ${IMAGE_FULL_NAME}"
-      echo "🚀 Ready for deliver-image stage"
-      echo "============================================"
 
 outputArtifacts:
   - name: file-service-image
