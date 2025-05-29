@@ -151,78 +151,78 @@ steps:
       
       # Crear Dockerfile
       cat > Dockerfile << 'EOF'
-  FROM eclipse-temurin:17-jre
-  
-  WORKDIR /app
-  
-  # Crear directorios
-  RUN mkdir -p /wallet /oci-keys
-  
-  # Copiar archivos
-  COPY build/FileService-0.0.1-SNAPSHOT.jar /app/app.jar
-  COPY build/wallet/ /wallet/
-  COPY build/oci-keys/ /oci-keys/
-  
-  # Configurar permisos
-  RUN chmod 755 /app/app.jar
-  RUN chmod 600 /wallet/* /oci-keys/* 2>/dev/null || true
-  
-  # Variables de entorno
-  ENV TNS_ADMIN=/wallet
-  ENV ORACLE_HOME=/wallet
-  ENV LD_LIBRARY_PATH=/wallet
-  ENV OCI_PRIVATE_KEY_PATH=/oci-keys/oci-private-key.pem
-  
-  EXPOSE 8082
-  
-  ENTRYPOINT ["java", "-jar", "/app/app.jar"]
-  EOF
-  
-  echo "Dockerfile created successfully"
+      FROM eclipse-temurin:17-jre
+      
+      WORKDIR /app
+      
+      # Crear directorios
+      RUN mkdir -p /wallet /oci-keys
+      
+      # Copiar archivos
+      COPY build/FileService-0.0.1-SNAPSHOT.jar /app/app.jar
+      COPY build/wallet/ /wallet/
+      COPY build/oci-keys/ /oci-keys/
+      
+      # Configurar permisos
+      RUN chmod 755 /app/app.jar
+      RUN chmod 600 /wallet/* /oci-keys/* 2>/dev/null || true
+      
+      # Variables de entorno
+      ENV TNS_ADMIN=/wallet
+      ENV ORACLE_HOME=/wallet
+      ENV LD_LIBRARY_PATH=/wallet
+      ENV OCI_PRIVATE_KEY_PATH=/oci-keys/oci-private-key.pem
+      
+      EXPOSE 8082
+      
+      ENTRYPOINT ["java", "-jar", "/app/app.jar"]
+      EOF
+      
+      echo "Dockerfile created successfully"
 
-- type: Command
-  name: "Build Docker image (no push)"
-  timeoutInSeconds: 900
-  command: |
-    # Generar versión automática
-    VERSION="$(date +'%Y%m%d-%H%M%S')"
-    echo "Generated version: $VERSION"
-    
-    # Agregar commit hash si está disponible
-    if [ -d ".git" ]; then
-      COMMIT_SHORT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-      VERSION="${VERSION}-${COMMIT_SHORT}"
-      echo "Version with commit: $VERSION"
-    fi
-    
-    # Construir tag de imagen
-    IMAGE_TAG="${REGISTRY}/${NAMESPACE}/${REPOSITORY}/${IMAGE_NAME}:${VERSION}"
-    echo "Building image with tag: ${IMAGE_TAG}"
-    
-    # Construir imagen Docker (SIN PUSH)
-    docker build --no-cache -t "${IMAGE_TAG}" -f Dockerfile .
-    
-    # Verificar que se construyó correctamente
-    if [ $? -ne 0 ]; then
-      echo "ERROR: Docker build failed"
-      exit 1
-    fi
-    
-    echo "Docker image built successfully!"
-    docker images | grep "${IMAGE_NAME}"
-    
-    # Establecer variables para export
-    export IMAGE_FULL_NAME="${IMAGE_TAG}"
-    export VERSION="${VERSION}"
-    
-    echo "IMAGE_FULL_NAME=${IMAGE_FULL_NAME}"
-    echo "VERSION=${VERSION}"
-    
-    echo "============================================"
-    echo "✅ Image built successfully (ready for delivery)"
-    echo "📦 Image: ${IMAGE_FULL_NAME}"
-    echo "🚀 Will be pushed by deliver-image stage"
-    echo "============================================"
+  - type: Command
+    name: "Build Docker image (no push)"
+    timeoutInSeconds: 900
+    command: |
+      # Generar versión automática
+      VERSION="$(date +'%Y%m%d-%H%M%S')"
+      echo "Generated version: $VERSION"
+      
+      # Agregar commit hash si está disponible
+      if [ -d ".git" ]; then
+        COMMIT_SHORT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+        VERSION="${VERSION}-${COMMIT_SHORT}"
+        echo "Version with commit: $VERSION"
+      fi
+      
+      # Construir tag de imagen
+      IMAGE_TAG="${REGISTRY}/${NAMESPACE}/${REPOSITORY}/${IMAGE_NAME}:${VERSION}"
+      echo "Building image with tag: ${IMAGE_TAG}"
+      
+      # Construir imagen Docker (SIN PUSH)
+      docker build --no-cache -t "${IMAGE_TAG}" -f Dockerfile .
+      
+      # Verificar que se construyó correctamente
+      if [ $? -ne 0 ]; then
+        echo "ERROR: Docker build failed"
+        exit 1
+      fi
+      
+      echo "Docker image built successfully!"
+      docker images | grep "${IMAGE_NAME}"
+      
+      # Establecer variables para export
+      export IMAGE_FULL_NAME="${IMAGE_TAG}"
+      export VERSION="${VERSION}"
+      
+      echo "IMAGE_FULL_NAME=${IMAGE_FULL_NAME}"
+      echo "VERSION=${VERSION}"
+      
+      echo "============================================"
+      echo "✅ Image built successfully (ready for delivery)"
+      echo "📦 Image: ${IMAGE_FULL_NAME}"
+      echo "🚀 Will be pushed by deliver-image stage"
+      echo "============================================"
 
 outputArtifacts:
   - name: file-service-image
