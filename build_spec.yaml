@@ -19,11 +19,28 @@ steps:
     name: "Install required tools"
     timeoutInSeconds: 120
     command: |
-      # Instalar jq para procesar JSON
-      apt-get update && apt-get install -y jq
+      # Detectar el gestor de paquetes disponible
+      if command -v yum >/dev/null 2>&1; then
+        echo "Using yum package manager..."
+        yum update -y && yum install -y jq
+      elif command -v dnf >/dev/null 2>&1; then
+        echo "Using dnf package manager..."
+        dnf update -y && dnf install -y jq
+      elif command -v apt-get >/dev/null 2>&1; then
+        echo "Using apt package manager..."
+        apt-get update && apt-get install -y jq
+      else
+        echo "No package manager found, trying to continue without jq..."
+        echo "Will try alternative methods for JSON parsing"
+      fi
       
-      # Verificar instalación
-      jq --version
+      # Verificar si jq está disponible
+      if command -v jq >/dev/null 2>&1; then
+        echo "jq installed successfully"
+        jq --version
+      else
+        echo "jq not available, will use alternative JSON parsing"
+      fi
 
   - type: Command
     name: "Recreate wallet files from secrets"
@@ -32,27 +49,30 @@ steps:
       # Crear el directorio de wallet
       mkdir -p wallet
       
-      # Función para obtener secret con manejo de Base64
+      # Función para obtener secret (funciona con o sin jq)
       get_secret() {
         local secret_id=$1
         local output_file=$2
       
         echo "Getting secret for: $(basename $output_file)"
-        local response=$(oci secrets secret-bundle get --secret-id "$secret_id" --stage LATEST 2>/dev/null)
-        if [ $? -ne 0 ]; then
+      
+        # Usar OCI CLI con query nativo para evitar dependencia de jq
+        local content=$(oci secrets secret-bundle get --secret-id "$secret_id" --stage LATEST --query 'data."secret-bundle-content".content' --raw-output 2>/dev/null)
+        if [ $? -ne 0 ] || [ -z "$content" ]; then
           echo "WARNING: Failed to get secret $secret_id, creating empty file"
           touch "$output_file"
           return 1
         fi
       
-        local content_type=$(echo "$response" | jq -r '.data["secret-bundle-content"]["content-type"]' 2>/dev/null)
-        local content=$(echo "$response" | jq -r '.data["secret-bundle-content"].content' 2>/dev/null)
-      
-        if [ "$content_type" = "BASE64" ]; then
-          echo "$content" | base64 -d > "$output_file"
+        # Intentar decodificar de base64, si falla usar contenido directo
+        if echo "$content" | base64 -d > "$output_file" 2>/dev/null; then
+          echo "Secret decoded from base64 for $(basename $output_file)"
         else
           echo "$content" > "$output_file"
+          echo "Secret used directly for $(basename $output_file)"
         fi
+      
+        return 0
       }
       
       # Obtener archivos del wallet (con manejo de errores)
@@ -131,78 +151,78 @@ steps:
       
       # Crear Dockerfile
       cat > Dockerfile << 'EOF'
-      FROM eclipse-temurin:17-jre
-      
-      WORKDIR /app
-      
-      # Crear directorios
-      RUN mkdir -p /wallet /oci-keys
-      
-      # Copiar archivos
-      COPY build/FileService-0.0.1-SNAPSHOT.jar /app/app.jar
-      COPY build/wallet/ /wallet/
-      COPY build/oci-keys/ /oci-keys/
-      
-      # Configurar permisos
-      RUN chmod 755 /app/app.jar
-      RUN chmod 600 /wallet/* /oci-keys/* 2>/dev/null || true
-      
-      # Variables de entorno
-      ENV TNS_ADMIN=/wallet
-      ENV ORACLE_HOME=/wallet
-      ENV LD_LIBRARY_PATH=/wallet
-      ENV OCI_PRIVATE_KEY_PATH=/oci-keys/oci-private-key.pem
-      
-      EXPOSE 8082
-      
-      ENTRYPOINT ["java", "-jar", "/app/app.jar"]
-      EOF
-      
-      echo "Dockerfile created successfully"
+  FROM eclipse-temurin:17-jre
+  
+  WORKDIR /app
+  
+  # Crear directorios
+  RUN mkdir -p /wallet /oci-keys
+  
+  # Copiar archivos
+  COPY build/FileService-0.0.1-SNAPSHOT.jar /app/app.jar
+  COPY build/wallet/ /wallet/
+  COPY build/oci-keys/ /oci-keys/
+  
+  # Configurar permisos
+  RUN chmod 755 /app/app.jar
+  RUN chmod 600 /wallet/* /oci-keys/* 2>/dev/null || true
+  
+  # Variables de entorno
+  ENV TNS_ADMIN=/wallet
+  ENV ORACLE_HOME=/wallet
+  ENV LD_LIBRARY_PATH=/wallet
+  ENV OCI_PRIVATE_KEY_PATH=/oci-keys/oci-private-key.pem
+  
+  EXPOSE 8082
+  
+  ENTRYPOINT ["java", "-jar", "/app/app.jar"]
+  EOF
+  
+  echo "Dockerfile created successfully"
 
-  - type: Command
-    name: "Build Docker image (no push)"
-    timeoutInSeconds: 900
-    command: |
-      # Generar versión automática
-      VERSION="$(date +'%Y%m%d-%H%M%S')"
-      echo "Generated version: $VERSION"
-      
-      # Agregar commit hash si está disponible
-      if [ -d ".git" ]; then
-        COMMIT_SHORT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-        VERSION="${VERSION}-${COMMIT_SHORT}"
-        echo "Version with commit: $VERSION"
-      fi
-      
-      # Construir tag de imagen
-      IMAGE_TAG="${REGISTRY}/${NAMESPACE}/${REPOSITORY}/${IMAGE_NAME}:${VERSION}"
-      echo "Building image with tag: ${IMAGE_TAG}"
-      
-      # Construir imagen Docker (SIN PUSH)
-      docker build --no-cache -t "${IMAGE_TAG}" -f Dockerfile .
-      
-      # Verificar que se construyó correctamente
-      if [ $? -ne 0 ]; then
-        echo "ERROR: Docker build failed"
-        exit 1
-      fi
-      
-      echo "Docker image built successfully!"
-      docker images | grep "${IMAGE_NAME}"
-      
-      # Establecer variables para export
-      export IMAGE_FULL_NAME="${IMAGE_TAG}"
-      export VERSION="${VERSION}"
-      
-      echo "IMAGE_FULL_NAME=${IMAGE_FULL_NAME}"
-      echo "VERSION=${VERSION}"
-      
-      echo "============================================"
-      echo "✅ Image built successfully (ready for delivery)"
-      echo "📦 Image: ${IMAGE_FULL_NAME}"
-      echo "🚀 Will be pushed by deliver-image stage"
-      echo "============================================"
+- type: Command
+  name: "Build Docker image (no push)"
+  timeoutInSeconds: 900
+  command: |
+    # Generar versión automática
+    VERSION="$(date +'%Y%m%d-%H%M%S')"
+    echo "Generated version: $VERSION"
+    
+    # Agregar commit hash si está disponible
+    if [ -d ".git" ]; then
+      COMMIT_SHORT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+      VERSION="${VERSION}-${COMMIT_SHORT}"
+      echo "Version with commit: $VERSION"
+    fi
+    
+    # Construir tag de imagen
+    IMAGE_TAG="${REGISTRY}/${NAMESPACE}/${REPOSITORY}/${IMAGE_NAME}:${VERSION}"
+    echo "Building image with tag: ${IMAGE_TAG}"
+    
+    # Construir imagen Docker (SIN PUSH)
+    docker build --no-cache -t "${IMAGE_TAG}" -f Dockerfile .
+    
+    # Verificar que se construyó correctamente
+    if [ $? -ne 0 ]; then
+      echo "ERROR: Docker build failed"
+      exit 1
+    fi
+    
+    echo "Docker image built successfully!"
+    docker images | grep "${IMAGE_NAME}"
+    
+    # Establecer variables para export
+    export IMAGE_FULL_NAME="${IMAGE_TAG}"
+    export VERSION="${VERSION}"
+    
+    echo "IMAGE_FULL_NAME=${IMAGE_FULL_NAME}"
+    echo "VERSION=${VERSION}"
+    
+    echo "============================================"
+    echo "✅ Image built successfully (ready for delivery)"
+    echo "📦 Image: ${IMAGE_FULL_NAME}"
+    echo "🚀 Will be pushed by deliver-image stage"
+    echo "============================================"
 
 outputArtifacts:
   - name: file-service-image
