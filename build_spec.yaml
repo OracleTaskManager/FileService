@@ -141,46 +141,68 @@ steps:
     name: "Build with Maven using Java 17"
     timeoutInSeconds: 600
     command: |
-      # Configurar Java 17
-      export JAVA_HOME=/opt/jdk-17.0.2
+      # Detectar y configurar Java 17 DENTRO de este step
+      if [ -d "/usr/lib/jvm/java-17-openjdk" ]; then
+        export JAVA_HOME=/usr/lib/jvm/java-17-openjdk
+      elif [ -d "/usr/lib/jvm/java-17-openjdk-amd64" ]; then
+        export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+      elif [ -d "/opt/jdk-17.0.2" ]; then
+        export JAVA_HOME=/opt/jdk-17.0.2
+      else
+        echo "❌ Java 17 not found, installing..."
+        # Instalar Java 17 si no existe
+        if command -v yum >/dev/null 2>&1; then
+          yum install -y java-17-openjdk-devel
+          export JAVA_HOME=/usr/lib/jvm/java-17-openjdk
+        elif command -v apt-get >/dev/null 2>&1; then
+          apt-get update && apt-get install -y openjdk-17-jdk
+          export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+        fi
+      fi
+
       export PATH=$JAVA_HOME/bin:$PATH
-      
+
       echo "☕ Verifying Java 17:"
       java -version
       javac -version
-      
-      # Verificar Maven
+      echo "🔧 JAVA_HOME: $JAVA_HOME"
+
       echo "📋 Maven configuration:"
       mvn -version
-      
+
       echo "🚀 Starting Maven build with Java 17..."
-      
-      # Compilar con Java 17
+
+      # Maven build SIN fallback - si falla, que falle todo
       mvn clean package -DskipTests \
           -Dmaven.compiler.source=17 \
           -Dmaven.compiler.target=17 \
-          -Dmaven.compiler.release=17 || {
-      
-        echo "⚠️ Maven build failed, creating fallback JAR..."
-      
-        # Crear JAR de fallback
-        mkdir -p target/classes
-      
-        # Crear MANIFEST sin heredoc
-        echo "Manifest-Version: 1.0" > manifest.txt
-        echo "Main-Class: com.Oracle.FileService.FileServiceApplication" >> manifest.txt
-        echo "Implementation-Title: FileService" >> manifest.txt
-        echo "Implementation-Version: 1.0.0" >> manifest.txt
-        echo "Built-By: Oracle DevOps" >> manifest.txt
-        echo "Build-Jdk: 17" >> manifest.txt
-      
-        jar cfm target/FileService-0.0.1-SNAPSHOT.jar manifest.txt -C target/classes . 2>/dev/null || \
-        jar cfm target/FileService-0.0.1-SNAPSHOT.jar manifest.txt
-      
-        echo "✅ Fallback JAR created"
-      }
-      
-      echo "📦 Final JAR:"
+          -Dmaven.compiler.release=17
+
+      # Verificar que el JAR se creó correctamente
+      if [ ! -f "target/FileService-0.0.1-SNAPSHOT.jar" ]; then
+        echo "❌ JAR file not created!"
+        exit 1
+      fi
+
+      # Verificar tamaño del JAR (debe ser > 1MB para una app Spring Boot)
+      JAR_SIZE=$(stat -f%z "target/FileService-0.0.1-SNAPSHOT.jar" 2>/dev/null || stat -c%s "target/FileService-0.0.1-SNAPSHOT.jar")
+      echo "📦 JAR size: $JAR_SIZE bytes"
+
+      if [ "$JAR_SIZE" -lt 10000 ]; then
+        echo "❌ JAR is too small ($JAR_SIZE bytes) - likely empty!"
+        exit 1
+      fi
+
+      # Verificar que contiene la clase principal
+      jar tf target/FileService-0.0.1-SNAPSHOT.jar | grep -q "FileServiceApplication.class"
+      if [ $? -ne 0 ]; then
+        echo "❌ Main class not found in JAR!"
+        jar tf target/FileService-0.0.1-SNAPSHOT.jar | head -20
+        exit 1
+      fi
+
+      echo "✅ Maven build successful!"
+      echo "📦 JAR created with correct size and main class"
       ls -la target/FileService-0.0.1-SNAPSHOT.jar
 
   - type: Command
