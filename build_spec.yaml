@@ -264,7 +264,7 @@ Implementation-Title: FileService
 Implementation-Version: 1.0.0
 Built-By: Oracle DevOps
 Build-Jdk: 17
-MANIFEST_EOF
+  MANIFEST_EOF
   
   jar cfm target/FileService-0.0.1-SNAPSHOT.jar manifest.txt -C target/classes . 2>/dev/null || \
   jar cfm target/FileService-0.0.1-SNAPSHOT.jar manifest.txt
@@ -279,38 +279,38 @@ MANIFEST_EOF
   echo "📋 JAR manifest:"
   jar tf target/FileService-0.0.1-SNAPSHOT.jar | head -5
   fi
-
-- type: Command
-  name: "Prepare Docker build context"
-  timeoutInSeconds: 120
-  command: |
-    echo "📁 Preparing build context..."
-    
-    # Crear estructura de directorios
-    mkdir -p build/wallet build/oci-keys
-    
-    # Copiar JAR
-    cp target/FileService-0.0.1-SNAPSHOT.jar build/
-    echo "✅ JAR copied to build context"
-    
-    # Copiar wallet files
-    if [ "$(ls -A wallet/ 2>/dev/null)" ]; then
-      cp -r wallet/* build/wallet/
-      echo "✅ Wallet files copied"
-    else
-      echo "⚠️ No wallet files to copy"
-    fi
-    
-    # Copiar OCI keys
-    if [ "$(ls -A oci-keys/ 2>/dev/null)" ]; then
-      cp -r oci-keys/* build/oci-keys/
-      echo "✅ OCI keys copied"
-    else
-      echo "⚠️ No OCI keys to copy"
-    fi
-    
-    echo "📋 Build context prepared:"
-    ls -la build/
+  
+  - type: Command
+    name: "Prepare Docker build context"
+    timeoutInSeconds: 120
+    command: |
+      echo "📁 Preparing build context..."
+      
+      # Crear estructura de directorios
+      mkdir -p build/wallet build/oci-keys
+      
+      # Copiar JAR
+      cp target/FileService-0.0.1-SNAPSHOT.jar build/
+      echo "✅ JAR copied to build context"
+      
+      # Copiar wallet files
+      if [ "$(ls -A wallet/ 2>/dev/null)" ]; then
+        cp -r wallet/* build/wallet/
+        echo "✅ Wallet files copied"
+      else
+        echo "⚠️ No wallet files to copy"
+      fi
+      
+      # Copiar OCI keys
+      if [ "$(ls -A oci-keys/ 2>/dev/null)" ]; then
+        cp -r oci-keys/* build/oci-keys/
+        echo "✅ OCI keys copied"
+      else
+        echo "⚠️ No OCI keys to copy"
+      fi
+      
+      echo "📋 Build context prepared:"
+      ls -la build/
 
 - type: Command
   name: "Create Dockerfile"
@@ -320,39 +320,39 @@ MANIFEST_EOF
     
     # Crear Dockerfile similar al de GitHub Actions
     cat > Dockerfile << 'EOF'
-  FROM eclipse-temurin:17-jre
-  
-  # Establecer directorio de trabajo
-  WORKDIR /app
-  
-  # Crear directorios necesarios
-  RUN mkdir -p /wallet /oci-keys
-  
-  # Copiar archivos de aplicación
-  COPY build/FileService-0.0.1-SNAPSHOT.jar /app/app.jar
-  COPY build/wallet/ /wallet/
-  COPY build/oci-keys/ /oci-keys/
-  
-  # Configurar permisos
-  RUN chmod 755 /app/app.jar
-  RUN chmod 600 /wallet/* /oci-keys/* 2>/dev/null || true
-  
-  # Variables de entorno para Oracle Wallet y OCI
-  ENV TNS_ADMIN=/wallet
-  ENV ORACLE_HOME=/wallet
-  ENV LD_LIBRARY_PATH=/wallet
-  ENV OCI_PRIVATE_KEY_PATH=/oci-keys/oci-private-key.pem
-  
-  # Puerto de la aplicación
-  EXPOSE 8082
-  
-  # Comando de inicio
-  ENTRYPOINT ["java", "-Djava.security.egd=file:/dev/./urandom", "-jar", "/app/app.jar"]
-  EOF
-  
-  echo "✅ Dockerfile created successfully"
-  echo "📄 Dockerfile content:"
-  cat Dockerfile
+    FROM eclipse-temurin:17-jre
+    
+    # Establecer directorio de trabajo
+    WORKDIR /app
+    
+    # Crear directorios necesarios
+    RUN mkdir -p /wallet /oci-keys
+    
+    # Copiar archivos de aplicación
+    COPY build/FileService-0.0.1-SNAPSHOT.jar /app/app.jar
+    COPY build/wallet/ /wallet/
+    COPY build/oci-keys/ /oci-keys/
+    
+    # Configurar permisos
+    RUN chmod 755 /app/app.jar
+    RUN chmod 600 /wallet/* /oci-keys/* 2>/dev/null || true
+    
+    # Variables de entorno para Oracle Wallet y OCI
+    ENV TNS_ADMIN=/wallet
+    ENV ORACLE_HOME=/wallet
+    ENV LD_LIBRARY_PATH=/wallet
+    ENV OCI_PRIVATE_KEY_PATH=/oci-keys/oci-private-key.pem
+    
+    # Puerto de la aplicación
+    EXPOSE 8082
+    
+    # Comando de inicio
+    ENTRYPOINT ["java", "-Djava.security.egd=file:/dev/./urandom", "-jar", "/app/app.jar"]
+    EOF
+    
+    echo "✅ Dockerfile created successfully"
+    echo "📄 Dockerfile content:"
+    cat Dockerfile
 
 - type: Command
   name: "Build Docker image"
