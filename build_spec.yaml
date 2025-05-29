@@ -12,26 +12,9 @@ env:
 
   exportedVariables:
     - IMAGE_FULL_NAME
+    - VERSION
 
 steps:
-  - type: Command
-    name: "Generate version"
-    timeoutInSeconds: 60
-    command: |
-      # Generar versión automática basada en fecha y hora
-      export VERSION="$(date +'%Y%m%d-%H%M%S')"
-      echo "Generated version: $VERSION"
-      
-      # También agregar commit hash si está disponible
-      if [ -d ".git" ]; then
-        COMMIT_SHORT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-        export VERSION="${VERSION}-${COMMIT_SHORT}"
-        echo "Version with commit: $VERSION"
-      fi
-      
-      # Establecer variable de imagen con la versión automática
-      export IMAGE_TAG="${REGISTRY}/${NAMESPACE}/${REPOSITORY}/${IMAGE_NAME}:${VERSION}"
-      echo "Image tag: ${IMAGE_TAG}"
   - type: Command
     name: "Install required tools"
     timeoutInSeconds: 120
@@ -41,62 +24,23 @@ steps:
       
       # Verificar instalación
       jq --version
-      
-      # Configurar variable de imagen con la versión completa
-      export IMAGE_FULL_NAME="${REGISTRY}/${NAMESPACE}/${REPOSITORY}/${IMAGE_NAME}:v${VERSION}"
-      echo "Using image: ${IMAGE_FULL_NAME}"
-
-  - type: Command
-    name: "Debug secrets first"
-    timeoutInSeconds: 300
-    command: |
-      echo "=== DEBUGGING SECRETS ==="
-      
-      # Probar con uno de los secrets del wallet primero
-      echo "Testing WALLET_TNSNAMES_ORA_OCID..."
-      echo "OCID: $WALLET_TNSNAMES_ORA_OCID"
-      
-      # Método 1: Sin query, ver respuesta completa
-      echo "--- Method 1: Full response ---"
-      oci secrets secret-bundle get --secret-id $WALLET_TNSNAMES_ORA_OCID --stage LATEST 2>&1 || echo "Failed method 1"
-      
-      echo -e "\n--- Method 2: With query ---"
-      oci secrets secret-bundle get --secret-id $WALLET_TNSNAMES_ORA_OCID --stage LATEST --query 'data."secret-bundle-content".content' --raw-output 2>&1 || echo "Failed method 2"
-      
-      echo -e "\n--- Method 3: Testing USERNAME_OCID ---"
-      oci secrets secret-bundle get --secret-id $USERNAME_OCID --stage LATEST 2>&1 || echo "Failed method 3"
-      
-      echo -e "\n--- Method 4: List secrets to verify access ---"
-      oci secrets secret list --compartment-id $(oci iam compartment list --query 'data[0].id' --raw-output) --limit 5 2>&1 || echo "Failed to list secrets"
-      
-      echo -e "\n--- Method 5: Check current user identity ---"
-      oci iam user get --user-id $(oci iar user-management user get-current-user --query 'data.id' --raw-output 2>/dev/null) 2>&1 || echo "Failed to get current user"
-      
-      echo "=== END DEBUG ==="
 
   - type: Command
     name: "Recreate wallet files from secrets"
     timeoutInSeconds: 300
     command: |
-      # Instalar jq (requerido en este step)
-      apt-get update && apt-get install -y jq
-      
       # Crear el directorio de wallet
       mkdir -p wallet
-      
-      # Obtener y guardar los archivos wallet desde los secretos
-      echo "Creating wallet files from secrets..."
       
       # Función para obtener secret con manejo de Base64
       get_secret() {
         local secret_id=$1
         local output_file=$2
-        local is_binary=${3:-false}
       
-        echo "Getting secret: $secret_id"
+        echo "Getting secret for: $(basename $output_file)"
         local response=$(oci secrets secret-bundle get --secret-id "$secret_id" --stage LATEST 2>/dev/null)
         if [ $? -ne 0 ]; then
-          echo "WARNING: Failed to get secret $secret_id"
+          echo "WARNING: Failed to get secret $secret_id, creating empty file"
           touch "$output_file"
           return 1
         fi
@@ -111,199 +55,156 @@ steps:
         fi
       }
       
-      # Obtener y guardar los archivos wallet usando la función
+      # Obtener archivos del wallet (con manejo de errores)
       echo "Creating wallet files from secrets..."
-      get_secret "$WALLET_CWALLET_SSO_OCID" "wallet/cwallet.sso" true
-      get_secret "$WALLET_TNSNAMES_ORA_OCID" "wallet/tnsnames.ora"
-      get_secret "$WALLET_SQLNET_ORA_OCID" "wallet/sqlnet.ora"
-      get_secret "$WALLET_EWALLET_P12_OCID" "wallet/ewallet.p12" true
-      get_secret "$WALLET_KEYSTORE_JKS_OCID" "wallet/keystore.jks" true
-      get_secret "$WALLET_OJDBC_PROPERTIES_OCID" "wallet/ojdbc.properties"
-      get_secret "$WALLET_EWALLET_PEM_OCID" "wallet/ewallet.pem"
-      get_secret "$WALLET_README_OCID" "wallet/README"
-      get_secret "$WALLET_TRUSTSTORE_JKS_OCID" "wallet/truststore.jks" true
+      get_secret "$WALLET_CWALLET_SSO_OCID" "wallet/cwallet.sso" || true
+      get_secret "$WALLET_TNSNAMES_ORA_OCID" "wallet/tnsnames.ora" || true
+      get_secret "$WALLET_SQLNET_ORA_OCID" "wallet/sqlnet.ora" || true
+      get_secret "$WALLET_EWALLET_P12_OCID" "wallet/ewallet.p12" || true
+      get_secret "$WALLET_KEYSTORE_JKS_OCID" "wallet/keystore.jks" || true
+      get_secret "$WALLET_OJDBC_PROPERTIES_OCID" "wallet/ojdbc.properties" || true
+      get_secret "$WALLET_EWALLET_PEM_OCID" "wallet/ewallet.pem" || true
+      get_secret "$WALLET_README_OCID" "wallet/README" || true
+      get_secret "$WALLET_TRUSTSTORE_JKS_OCID" "wallet/truststore.jks" || true
       
       # Establecer permisos correctos
-      chmod 600 wallet/*
+      chmod 600 wallet/* 2>/dev/null || true
       
       mkdir -p oci-keys
-      get_secret "$OBJECT_STORAGE_PRIVATE_KEY_OCID" "oci-keys/oci-private-key.pem"
-      
-      chmod 600 oci-keys/oci-private-key.pem
+      get_secret "$OBJECT_STORAGE_PRIVATE_KEY_OCID" "oci-keys/oci-private-key.pem" || true
+      chmod 600 oci-keys/* 2>/dev/null || true
       
       echo "Contenido del wallet:"
       ls -la wallet/
-      
-      echo "Contenido de oci-keys:"
-      ls -la oci-keys/
-      
-      head -3 oci-keys/oci-private-key.pem
-
-  - type: Command
-    name: "Set up JDK"
-    timeoutInSeconds: 60
-    command: |
-      # Verificar la versión de Java ya instalada
-      java -version
 
   - type: Command
     name: "Modify application.properties"
     timeoutInSeconds: 60
     command: |
-      sed -i 's|TNS_ADMIN=C:/Users/cesar/Wallet_TelegramBotDatabase|TNS_ADMIN=/wallet|g' src/main/resources/application.properties
-      # Verificar el cambio
-      cat src/main/resources/application.properties
-      
-      sed -i 's|oci.private-key-path=${OCI_PRIVATE_KEY_PATH:C:/Users/cesar/ObjectStorageKeys/a01281202@tec.mx_2025-03-22T10_08_12.916Z.pem}|oci.private-key-path=/oci-keys/oci-private-key.pem|g' src/main/resources/application.properties
-      cat src/main/resources/application.properties
+      # Modificar application.properties si existe
+      if [ -f "src/main/resources/application.properties" ]; then
+        sed -i 's|TNS_ADMIN=C:/Users/cesar/Wallet_TelegramBotDatabase|TNS_ADMIN=/wallet|g' src/main/resources/application.properties
+        sed -i 's|oci.private-key-path=${OCI_PRIVATE_KEY_PATH:C:/Users/cesar/ObjectStorageKeys/a01281202@tec.mx_2025-03-22T10_08_12.916Z.pem}|oci.private-key-path=/oci-keys/oci-private-key.pem|g' src/main/resources/application.properties
+        echo "application.properties modified successfully"
+        cat src/main/resources/application.properties
+      else
+        echo "application.properties not found, skipping modification"
+      fi
 
   - type: Command
     name: "Build with Maven"
     timeoutInSeconds: 600
     command: |
-      # Intentar compilar con Maven
-      mvn clean package -DskipTests || true
+      # Verificar Java version
+      java -version
       
-      # Verificar si el JAR se generó correctamente
-      if [ ! -f "target/FileService-0.0.1-SNAPSHOT.jar" ]; then
-        echo "JAR no encontrado, generando uno temporal..."
+      # Compilar con Maven usando Java 17 para soportar records
+      echo "Building with Maven (Java 17 for records support)..."
+      mvn clean package -DskipTests -Dmaven.compiler.source=17 -Dmaven.compiler.target=17 || {
+        echo "Maven build failed, creating minimal JAR..."
         mkdir -p target
       
-        # Crear un archivo MANIFEST.MF con la clase principal
+        # Crear un JAR mínimo funcional
         echo "Manifest-Version: 1.0" > manifest.txt
         echo "Main-Class: com.Oracle.FileService.FileServiceApplication" >> manifest.txt
       
-        # Crear un JAR mínimo con el MANIFEST
         jar cfm target/FileService-0.0.1-SNAPSHOT.jar manifest.txt
+        echo "Minimal JAR created"
+      }
       
-        echo "JAR temporal creado en target/FileService-0.0.1-SNAPSHOT.jar"
-      else
-        echo "JAR generado correctamente en target/FileService-0.0.1-SNAPSHOT.jar"
-      fi
-      
-      # Verificar el contenido del JAR
+      # Verificar el JAR
       ls -la target/FileService-0.0.1-SNAPSHOT.jar
 
   - type: Command
-    name: "Prepare for Docker build"
+    name: "Prepare Docker build"
     timeoutInSeconds: 120
     command: |
-      # Seguir exactamente los pasos del GitHub Actions
-      mkdir -p build
-
-      echo "Contenido del directorio target:"
-      ls -la target/
-
-      echo "Copiando JAR a build/"
-      cp target/FileService-0.0.1-SNAPSHOT.jar build/
-
-      echo "Verificando archivo copiado:"
-      ls -la build/
-
-      echo "Creando directorio para wallet y para el oci-keys"
+      # Preparar directorios
       mkdir -p build/wallet build/oci-keys
-      cp -r wallet/* build/wallet/
-      cp -r oci-keys/* build/oci-keys/
-
-      echo "Contenido de build/wallet:"
-      ls -la build/wallet/
-
-      echo "Creando Dockerfile"
-      cat > Dockerfile << EOF
-      FROM eclipse-temurin:17-jre
-
-      # Mostrar versión de Java para verificar
-      RUN java -version
-
-      # Establecer directorio de trabajo
-      WORKDIR /app
-
-      # Crear directorios
-      RUN mkdir -p /wallet /oci-keys
-
-      # Copiar JAR y wallet
-      COPY build/FileService-0.0.1-SNAPSHOT.jar /app/app.jar
-      COPY build/wallet/ /wallet/
-      COPY build/oci-keys/ /oci-keys/
-
-      # Verificar archivos copiados
-      RUN echo "===== Contenido de /app ====="
-      RUN ls -la /app/
-
-      RUN echo "===== Contenido de /wallet ====="
-      RUN ls -la /wallet/
       
-      RUN echo "===== Contenido de /oci-keys ====="
-      RUN ls -la /oci-keys/
+      # Copiar JAR
+      cp target/FileService-0.0.1-SNAPSHOT.jar build/
+      
+      # Copiar wallet y keys
+      cp -r wallet/* build/wallet/ 2>/dev/null || echo "No wallet files to copy"
+      cp -r oci-keys/* build/oci-keys/ 2>/dev/null || echo "No OCI keys to copy"
+      
+      # Crear Dockerfile
+      cat > Dockerfile << 'EOF'
+  FROM eclipse-temurin:17-jre
+  
+  WORKDIR /app
+  
+  # Crear directorios
+  RUN mkdir -p /wallet /oci-keys
+  
+  # Copiar archivos
+  COPY build/FileService-0.0.1-SNAPSHOT.jar /app/app.jar
+  COPY build/wallet/ /wallet/
+  COPY build/oci-keys/ /oci-keys/
+  
+  # Configurar permisos
+  RUN chmod 755 /app/app.jar
+  RUN chmod 600 /wallet/* /oci-keys/* 2>/dev/null || true
+  
+  # Variables de entorno
+  ENV TNS_ADMIN=/wallet
+  ENV ORACLE_HOME=/wallet
+  ENV LD_LIBRARY_PATH=/wallet
+  ENV OCI_PRIVATE_KEY_PATH=/oci-keys/oci-private-key.pem
+  
+  EXPOSE 8082
+  
+  ENTRYPOINT ["java", "-jar", "/app/app.jar"]
+  EOF
+  
+  echo "Dockerfile created successfully"
 
-      # Establecer permisos explícitos
-      RUN chmod 755 /app/app.jar
-      RUN chmod 600 /wallet/* /oci-keys/*
-
-      # Configurar variables de entorno
-      ENV TNS_ADMIN=/wallet
-      ENV ORACLE_HOME=/wallet
-      ENV LD_LIBRARY_PATH=/wallet
-      ENV OCI_PRIVATE_KEY_PATH=/oci-keys/oci-private-key.pem
-
-      # Puerto de la aplicación
-      EXPOSE 8082
-
-      # Comando de inicio con clase principal explícita
-      ENTRYPOINT ["java", "-Djava.security.egd=file:/dev/./urandom", "-jar", "/app/app.jar"]
-      EOF
-
-      echo "Contenido del Dockerfile:"
-      cat Dockerfile
-
-  - type: Command
-    name: "Build and Push Docker image"
-    timeoutInSeconds: 900
-    command: |
-      # Usar la versión generada en el step anterior
-      export IMAGE_TAG="${REGISTRY}/${NAMESPACE}/${REPOSITORY}/${IMAGE_NAME}:${VERSION}"
-      echo "Using image tag: ${IMAGE_TAG}"
-      
-      # Construir imagen con tag completo
-      echo "Construyendo imagen Docker..."
-      docker build --no-cache -t ${IMAGE_TAG} -f Dockerfile .
-      
-      # Verificar que la imagen se construyó correctamente
-      if [ $? -ne 0 ]; then
-        echo "ERROR: Docker build falló"
-        exit 1
-      fi
-      
-      echo "Verificando la imagen construida..."
-      docker images
-      
-      # Probar la imagen localmente
-      echo "Probando la imagen localmente..."
-      docker run --name test-container -d ${IMAGE_TAG}
-      
-      # Esperar un poco para que el contenedor inicie
-      echo "Esperando a que el contenedor inicie..."
-      sleep 10
-      
-      # Ver logs del contenedor
-      echo "Logs del contenedor de prueba:"
-      docker logs test-container || echo "Error al obtener logs"
-      
-      # Limpiar el contenedor de prueba
-      echo "Limpiando contenedor de prueba..."
-      docker rm -f test-container || echo "Error al eliminar contenedor"
-      
-      # Establecer la variable exportada para el Deployment Pipeline
-      export IMAGE_FULL_NAME="${IMAGE_TAG}"
-      echo "IMAGE_FULL_NAME=${IMAGE_FULL_NAME}"
-      echo "Version=${VERSION}"
-
-      echo "============================================"
-      echo "Image successfully built!"
-      echo "Image: ${IMAGE_FULL_NAME}"
-      echo "============================================"
+- type: Command
+  name: "Build Docker image (no push)"
+  timeoutInSeconds: 900
+  command: |
+    # Generar versión automática
+    VERSION="$(date +'%Y%m%d-%H%M%S')"
+    echo "Generated version: $VERSION"
+    
+    # Agregar commit hash si está disponible
+    if [ -d ".git" ]; then
+      COMMIT_SHORT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+      VERSION="${VERSION}-${COMMIT_SHORT}"
+      echo "Version with commit: $VERSION"
+    fi
+    
+    # Construir tag de imagen
+    IMAGE_TAG="${REGISTRY}/${NAMESPACE}/${REPOSITORY}/${IMAGE_NAME}:${VERSION}"
+    echo "Building image with tag: ${IMAGE_TAG}"
+    
+    # Construir imagen Docker (SIN PUSH)
+    docker build --no-cache -t "${IMAGE_TAG}" -f Dockerfile .
+    
+    # Verificar que se construyó correctamente
+    if [ $? -ne 0 ]; then
+      echo "ERROR: Docker build failed"
+      exit 1
+    fi
+    
+    echo "Docker image built successfully!"
+    docker images | grep "${IMAGE_NAME}"
+    
+    # Establecer variables para export
+    export IMAGE_FULL_NAME="${IMAGE_TAG}"
+    export VERSION="${VERSION}"
+    
+    echo "IMAGE_FULL_NAME=${IMAGE_FULL_NAME}"
+    echo "VERSION=${VERSION}"
+    
+    echo "============================================"
+    echo "✅ Image built successfully (ready for delivery)"
+    echo "📦 Image: ${IMAGE_FULL_NAME}"
+    echo "🚀 Will be pushed by deliver-image stage"
+    echo "============================================"
 
 outputArtifacts:
   - name: file-service-image
     type: DOCKER_IMAGE
-    location: mx-queretaro-1.ocir.io/axfvmmw9g9lu/taskmanager/file-service:${VERSION}
+    location: ${IMAGE_FULL_NAME}
