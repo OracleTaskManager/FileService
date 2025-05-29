@@ -9,10 +9,6 @@ env:
     NAMESPACE: "axfvmmw9g9lu"
     REPOSITORY: "taskmanager"
     IMAGE_NAME: "file-service"
-    VERSION: "4"  # Incrementado a 4
-    # Variables de secrets OCIDs - DEBES CONFIGURAR ESTAS EN EL BUILD PIPELINE
-    # OCI_USERNAME_OCID: "ocid1.vaultsecret.oc1.xxx"  # ID del secret OCI_USERNAME
-    # OCI_AUTH_TOKEN_OCID: "ocid1.vaultsecret.oc1.xxx"  # ID del secret OCI_AUTH_TOKEN
 
   exportedVariables:
     - IMAGE_FULL_NAME
@@ -268,69 +264,6 @@ steps:
       export IMAGE_TAG="${REGISTRY}/${NAMESPACE}/${REPOSITORY}/${IMAGE_NAME}:${VERSION}"
       echo "Using image tag: ${IMAGE_TAG}"
       
-      # Debug: Verificar variables de entorno de secrets
-      echo "Checking secret environment variables..."
-      echo "AUTH_TOKEN_OCID: ${AUTH_TOKEN_OCID:+SET}"
-      echo "USERNAME_OCID: ${USERNAME_OCID:+SET}"
-      
-      # Obtener credenciales desde los secretos usando oci CLI directamente
-      echo "Getting credentials from secrets..."
-      
-      # Obtener username usando --raw-output
-      echo "Getting OCI_USERNAME..."
-      OCI_USERNAME_B64=$(oci secrets secret-bundle get --secret-id $USERNAME_OCID --stage LATEST --query 'data."secret-bundle-content".content' --raw-output 2>/dev/null)
-      if [ $? -ne 0 ] || [ -z "$OCI_USERNAME_B64" ]; then
-        echo "ERROR: Failed to get OCI_USERNAME secret"
-        exit 1
-      fi
-      
-      # Decodificar de Base64
-      OCI_USERNAME=$(echo "$OCI_USERNAME_B64" | base64 -d 2>/dev/null)
-      if [ $? -ne 0 ] || [ -z "$OCI_USERNAME" ]; then
-        echo "ERROR: Failed to decode OCI_USERNAME from base64"
-        echo "Base64 content: $OCI_USERNAME_B64"
-        exit 1
-      fi
-      
-      # Obtener auth token usando --raw-output  
-      echo "Getting OCI_AUTH_TOKEN..."
-      OCI_AUTH_TOKEN_B64=$(oci secrets secret-bundle get --secret-id $AUTH_TOKEN_OCID --stage LATEST --query 'data."secret-bundle-content".content' --raw-output 2>/dev/null)
-      if [ $? -ne 0 ] || [ -z "$OCI_AUTH_TOKEN_B64" ]; then
-        echo "ERROR: Failed to get OCI_AUTH_TOKEN secret"
-        exit 1
-      fi
-      
-      # Decodificar de Base64
-      OCI_AUTH_TOKEN=$(echo "$OCI_AUTH_TOKEN_B64" | base64 -d 2>/dev/null)
-      if [ $? -ne 0 ] || [ -z "$OCI_AUTH_TOKEN" ]; then
-        echo "ERROR: Failed to decode OCI_AUTH_TOKEN from base64"
-        echo "Base64 content: $OCI_AUTH_TOKEN_B64"
-        exit 1
-      fi
-      
-      # Verificar que se obtuvieron las credenciales
-      if [ -z "$OCI_USERNAME" ] || [ -z "$OCI_AUTH_TOKEN" ]; then
-        echo "ERROR: No se pudieron obtener las credenciales para Docker login"
-        echo "OCI_USERNAME: [${OCI_USERNAME:+SET}]"
-        echo "OCI_AUTH_TOKEN: [${OCI_AUTH_TOKEN:+SET}]"
-        exit 1
-      fi
-      
-      echo "Credenciales obtenidas correctamente"
-      echo "Username: ${NAMESPACE}/${OCI_USERNAME}"
-      
-      # Login con credenciales explícitas
-      echo "Logging in to Docker Registry..."
-      echo "${OCI_AUTH_TOKEN}" | docker login ${REGISTRY} -u ${NAMESPACE}/${OCI_USERNAME} --password-stdin
-      
-      # Verificar el estado del login
-      if [ $? -ne 0 ]; then
-        echo "ERROR: Docker login falló. No se puede continuar."
-        exit 1
-      fi
-      
-      echo "Docker login exitoso"
-      
       # Construir imagen con tag completo
       echo "Construyendo imagen Docker..."
       docker build --no-cache -t ${IMAGE_TAG} -f Dockerfile .
@@ -360,28 +293,14 @@ steps:
       echo "Limpiando contenedor de prueba..."
       docker rm -f test-container || echo "Error al eliminar contenedor"
       
-      # Subir la imagen al registry
-      echo "Subiendo imagen a registry..."
-      docker push ${IMAGE_TAG}
-      
-      # Verificar el estado del push
-      if [ $? -ne 0 ]; then
-        echo "ERROR: Docker push falló"
-        exit 1
-      fi
-      
-      echo "Docker push exitoso"
-      
       # Establecer la variable exportada para el Deployment Pipeline
       export IMAGE_FULL_NAME="${IMAGE_TAG}"
       echo "IMAGE_FULL_NAME=${IMAGE_FULL_NAME}"
+      echo "Version=${VERSION}"
 
       echo "============================================"
-      echo "Image successfully built and pushed!"
+      echo "Image successfully built!"
       echo "Image: ${IMAGE_FULL_NAME}"
-      echo "============================================"
-      echo "To update your Kubernetes deployment, run:"
-      echo "kubectl set image deployment/file-deployment file-service=${IMAGE_FULL_NAME}"
       echo "============================================"
 
 outputArtifacts:
