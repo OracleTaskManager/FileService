@@ -27,35 +27,21 @@ steps:
       # Detectar el gestor de paquetes e instalar Java 17
       if command -v yum >/dev/null 2>&1; then
         echo "Using yum package manager..."
-        # Para Oracle Linux/RHEL
         yum update -y
         yum install -y java-17-openjdk-devel wget
-      
-        # Configurar JAVA_HOME
         export JAVA_HOME=/usr/lib/jvm/java-17-openjdk
-      
       elif command -v dnf >/dev/null 2>&1; then
         echo "Using dnf package manager..."
-        # Para Fedora/newer RHEL
         dnf update -y
         dnf install -y java-17-openjdk-devel wget
-      
-        # Configurar JAVA_HOME
         export JAVA_HOME=/usr/lib/jvm/java-17-openjdk
-      
       elif command -v apt-get >/dev/null 2>&1; then
         echo "Using apt package manager..."
-        # Para Ubuntu/Debian
         apt-get update
         apt-get install -y openjdk-17-jdk wget
-      
-        # Configurar JAVA_HOME
         export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
-      
       else
         echo "❌ No package manager found, trying manual installation..."
-      
-        # Instalación manual de OpenJDK 17
         cd /opt
         wget -q https://download.java.net/java/GA/jdk17.0.2/dfd4a8d0985749f896bed50d7138ee7f/8/GPL/openjdk-17.0.2_linux-x64_bin.tar.gz
         tar -xzf openjdk-17.0.2_linux-x64_bin.tar.gz
@@ -77,16 +63,6 @@ steps:
       # Guardar variables de entorno para próximos steps
       echo "export JAVA_HOME=$JAVA_HOME" >> ~/.bashrc
       echo "export PATH=$JAVA_HOME/bin:\$PATH" >> ~/.bashrc
-      
-      # También instalar jq si es posible
-      echo "📦 Installing additional tools..."
-      if command -v yum >/dev/null 2>&1; then
-        yum install -y jq || echo "jq installation failed, continuing..."
-      elif command -v dnf >/dev/null 2>&1; then
-        dnf install -y jq || echo "jq installation failed, continuing..."
-      elif command -v apt-get >/dev/null 2>&1; then
-        apt-get install -y jq || echo "jq installation failed, continuing..."
-      fi
 
   - type: Command
     name: "Recreate wallet files from secrets"
@@ -165,75 +141,16 @@ steps:
     name: "Build with Maven using Java 17"
     timeoutInSeconds: 600
     command: |
-      # Forzar configuración de Java 17
-      echo "🔧 Configuring Java 17 environment..."
+      # Configurar Java 17
+      export JAVA_HOME=/opt/jdk-17.0.2
+      export PATH=$JAVA_HOME/bin:$PATH
       
-      # Buscar instalaciones de Java disponibles
-      JAVA_17_PATHS=(
-        "/usr/lib/jvm/java-17-openjdk"
-        "/usr/lib/jvm/java-17-openjdk-amd64"
-        "/usr/lib/jvm/jdk-17"
-        "/opt/jdk-17.0.2"
-      )
-      
-      JAVA_17_HOME=""
-      for path in "${JAVA_17_PATHS[@]}"; do
-        if [ -d "$path" ] && [ -x "$path/bin/java" ]; then
-          JAVA_17_HOME="$path"
-          echo "✅ Found Java 17 at: $path"
-          break
-        fi
-      done
-      
-      if [ -z "$JAVA_17_HOME" ]; then
-        echo "❌ Java 17 not found, trying manual installation..."
-      
-        # Intentar instalación manual
-        cd /tmp
-        wget -q https://download.java.net/java/GA/jdk17.0.2/dfd4a8d0985749f896bed50d7138ee7f/8/GPL/openjdk-17.0.2_linux-x64_bin.tar.gz || {
-          echo "❌ Cannot download Java 17, using fallback build"
-          mkdir -p target
-          echo "Manifest-Version: 1.0" > manifest.txt
-          echo "Main-Class: com.Oracle.FileService.FileServiceApplication" >> manifest.txt
-          jar cfm target/FileService-0.0.1-SNAPSHOT.jar manifest.txt
-          echo "✅ Fallback JAR created"
-          exit 0
-        }
-      
-        tar -xzf openjdk-17.0.2_linux-x64_bin.tar.gz -C /opt/
-        JAVA_17_HOME="/opt/jdk-17.0.2"
-        cd -
-      fi
-      
-      # Configurar variables de entorno para Java 17
-      export JAVA_HOME="$JAVA_17_HOME"
-      export PATH="$JAVA_17_HOME/bin:$PATH"
-      
-      echo "🔧 Java 17 configuration:"
-      echo "JAVA_HOME: $JAVA_HOME"
-      echo "PATH: $PATH"
-      
-      # Verificar que ahora usamos Java 17
       echo "☕ Verifying Java 17:"
       java -version
       javac -version
       
       # Verificar Maven
       echo "📋 Maven configuration:"
-      if ! command -v mvn >/dev/null 2>&1; then
-        echo "❌ Maven not found, installing..."
-        if command -v yum >/dev/null 2>&1; then
-          yum install -y maven
-        elif command -v dnf >/dev/null 2>&1; then
-          dnf install -y maven
-        else
-          echo "❌ Cannot install Maven"
-          exit 1
-        fi
-      fi
-      
-      # Configurar Maven para usar Java 17
-      export MAVEN_OPTS="-Djava.version=17"
       mvn -version
       
       echo "🚀 Starting Maven build with Java 17..."
@@ -242,44 +159,30 @@ steps:
       mvn clean package -DskipTests \
           -Dmaven.compiler.source=17 \
           -Dmaven.compiler.target=17 \
-          -Dmaven.compiler.release=17 \
-          -Djava.version=17 \
-          -X || {
+          -Dmaven.compiler.release=17 || {
       
         echo "⚠️ Maven build failed, creating fallback JAR..."
-      
-        # Verificar si el problema son Java Records
-        if grep -r "record " src/ 2>/dev/null; then
-          echo "📝 Found Java Records - compilation requires Java 17"
-        fi
       
         # Crear JAR de fallback
         mkdir -p target/classes
       
-        # Crear MANIFEST completo
-        cat > manifest.txt << 'MANIFEST_EOF'
-Manifest-Version: 1.0
-Main-Class: com.Oracle.FileService.FileServiceApplication
-Implementation-Title: FileService
-Implementation-Version: 1.0.0
-Built-By: Oracle DevOps
-Build-Jdk: 17
-  MANIFEST_EOF
-  
-  jar cfm target/FileService-0.0.1-SNAPSHOT.jar manifest.txt -C target/classes . 2>/dev/null || \
-  jar cfm target/FileService-0.0.1-SNAPSHOT.jar manifest.txt
-  
-  echo "✅ Fallback JAR created"
-  }
-  
-  echo "📦 Final JAR:"
-  ls -la target/FileService-0.0.1-SNAPSHOT.jar
-  
-  if [ -f target/FileService-0.0.1-SNAPSHOT.jar ]; then
-  echo "📋 JAR manifest:"
-  jar tf target/FileService-0.0.1-SNAPSHOT.jar | head -5
-  fi
-  
+        # Crear MANIFEST sin heredoc
+        echo "Manifest-Version: 1.0" > manifest.txt
+        echo "Main-Class: com.Oracle.FileService.FileServiceApplication" >> manifest.txt
+        echo "Implementation-Title: FileService" >> manifest.txt
+        echo "Implementation-Version: 1.0.0" >> manifest.txt
+        echo "Built-By: Oracle DevOps" >> manifest.txt
+        echo "Build-Jdk: 17" >> manifest.txt
+      
+        jar cfm target/FileService-0.0.1-SNAPSHOT.jar manifest.txt -C target/classes . 2>/dev/null || \
+        jar cfm target/FileService-0.0.1-SNAPSHOT.jar manifest.txt
+      
+        echo "✅ Fallback JAR created"
+      }
+      
+      echo "📦 Final JAR:"
+      ls -la target/FileService-0.0.1-SNAPSHOT.jar
+
   - type: Command
     name: "Prepare Docker build context"
     timeoutInSeconds: 120
@@ -312,94 +215,77 @@ Build-Jdk: 17
       echo "📋 Build context prepared:"
       ls -la build/
 
-- type: Command
-  name: "Create Dockerfile"
-  timeoutInSeconds: 60
-  command: |
-    echo "🐳 Creating Dockerfile..."
-    
-    # Crear Dockerfile similar al de GitHub Actions
-    cat > Dockerfile << 'EOF'
-    FROM eclipse-temurin:17-jre
-    
-    # Establecer directorio de trabajo
-    WORKDIR /app
-    
-    # Crear directorios necesarios
-    RUN mkdir -p /wallet /oci-keys
-    
-    # Copiar archivos de aplicación
-    COPY build/FileService-0.0.1-SNAPSHOT.jar /app/app.jar
-    COPY build/wallet/ /wallet/
-    COPY build/oci-keys/ /oci-keys/
-    
-    # Configurar permisos
-    RUN chmod 755 /app/app.jar
-    RUN chmod 600 /wallet/* /oci-keys/* 2>/dev/null || true
-    
-    # Variables de entorno para Oracle Wallet y OCI
-    ENV TNS_ADMIN=/wallet
-    ENV ORACLE_HOME=/wallet
-    ENV LD_LIBRARY_PATH=/wallet
-    ENV OCI_PRIVATE_KEY_PATH=/oci-keys/oci-private-key.pem
-    
-    # Puerto de la aplicación
-    EXPOSE 8082
-    
-    # Comando de inicio
-    ENTRYPOINT ["java", "-Djava.security.egd=file:/dev/./urandom", "-jar", "/app/app.jar"]
-    EOF
-    
-    echo "✅ Dockerfile created successfully"
-    echo "📄 Dockerfile content:"
-    cat Dockerfile
+  - type: Command
+    name: "Create Dockerfile"
+    timeoutInSeconds: 60
+    command: |
+      echo "🐳 Creating Dockerfile..."
+      
+      # Crear Dockerfile
+      cat > Dockerfile << 'EOF'
+      FROM eclipse-temurin:17-jre
+      
+      WORKDIR /app
+      
+      RUN mkdir -p /wallet /oci-keys
+      
+      COPY build/FileService-0.0.1-SNAPSHOT.jar /app/app.jar
+      COPY build/wallet/ /wallet/
+      COPY build/oci-keys/ /oci-keys/
+      
+      RUN chmod 755 /app/app.jar
+      RUN chmod 600 /wallet/* /oci-keys/* 2>/dev/null || true
+      
+      ENV TNS_ADMIN=/wallet
+      ENV ORACLE_HOME=/wallet
+      ENV LD_LIBRARY_PATH=/wallet
+      ENV OCI_PRIVATE_KEY_PATH=/oci-keys/oci-private-key.pem
+      
+      EXPOSE 8082
+      
+      ENTRYPOINT ["java", "-Djava.security.egd=file:/dev/./urandom", "-jar", "/app/app.jar"]
+      EOF
+      
+      echo "✅ Dockerfile created successfully"
 
-- type: Command
-  name: "Build Docker image"
-  timeoutInSeconds: 900
-  command: |
-    # Generar versión única
-    VERSION="$(date +'%Y%m%d-%H%M%S')"
-    if [ -d ".git" ]; then
-      COMMIT_SHORT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-      VERSION="${VERSION}-${COMMIT_SHORT}"
-    fi
-    echo "🏷️ Generated version: $VERSION"
-    
-    # Construir tag de imagen
-    IMAGE_TAG="${REGISTRY}/${NAMESPACE}/${REPOSITORY}/${IMAGE_NAME}:${VERSION}"
-    echo "🐳 Building Docker image: ${IMAGE_TAG}"
-    
-    # Construir imagen (sin push - eso lo hace deliver-image)
-    docker build --no-cache -t "${IMAGE_TAG}" .
-    
-    if [ $? -ne 0 ]; then
-      echo "❌ Docker build failed"
-      exit 1
-    fi
-    
-    echo "✅ Docker image built successfully!"
-    
-    # Verificar imagen
-    echo "🔍 Image details:"
-    docker images | head -1
-    docker images | grep "${IMAGE_NAME}" | head -1
-    
-    # Exportar variables para deliver-image stage
-    export IMAGE_FULL_NAME="${IMAGE_TAG}"
-    export VERSION="${VERSION}"
-    
-    echo ""
-    echo "🎯 Exported variables:"
-    echo "IMAGE_FULL_NAME=${IMAGE_FULL_NAME}"
-    echo "VERSION=${VERSION}"
-    
-    echo ""
-    echo "============================================"
-    echo "✅ BUILD COMPLETED SUCCESSFULLY!"
-    echo "📦 Image: ${IMAGE_FULL_NAME}"
-    echo "🚀 Ready for deliver-image stage"
-    echo "============================================"
+  - type: Command
+    name: "Build Docker image"
+    timeoutInSeconds: 900
+    command: |
+      # Generar versión única
+      VERSION="$(date +'%Y%m%d-%H%M%S')"
+      if [ -d ".git" ]; then
+        COMMIT_SHORT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+        VERSION="${VERSION}-${COMMIT_SHORT}"
+      fi
+      echo "🏷️ Generated version: $VERSION"
+      
+      # Construir tag de imagen
+      IMAGE_TAG="${REGISTRY}/${NAMESPACE}/${REPOSITORY}/${IMAGE_NAME}:${VERSION}"
+      echo "🐳 Building Docker image: ${IMAGE_TAG}"
+      
+      # Construir imagen (sin push - eso lo hace deliver-image)
+      docker build --no-cache -t "${IMAGE_TAG}" .
+      
+      if [ $? -ne 0 ]; then
+        echo "❌ Docker build failed"
+        exit 1
+      fi
+      
+      echo "✅ Docker image built successfully!"
+      
+      # Exportar variables para deliver-image stage
+      export IMAGE_FULL_NAME="${IMAGE_TAG}"
+      export VERSION="${VERSION}"
+      
+      echo "🎯 IMAGE_FULL_NAME=${IMAGE_FULL_NAME}"
+      echo "🎯 VERSION=${VERSION}"
+      
+      echo "============================================"
+      echo "✅ BUILD COMPLETED SUCCESSFULLY!"
+      echo "📦 Image: ${IMAGE_FULL_NAME}"
+      echo "🚀 Ready for deliver-image stage"
+      echo "============================================"
 
 outputArtifacts:
   - name: file-service-image
