@@ -29,6 +29,11 @@ public class AttachmentController {
         this.attachmentService = attachmentService;
     }
 
+    @PostMapping("/testTrigger")
+    public ResponseEntity<?> testTrigger(){
+        return ResponseEntity.ok("Triggering test connection to Object Storage Service");
+    }
+
     @GetMapping("/test")
     public String testconnection(){
         return StorageService.testConnection();
