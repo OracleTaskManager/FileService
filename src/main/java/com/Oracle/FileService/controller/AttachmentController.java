@@ -37,6 +37,7 @@ public class AttachmentController {
     @PostMapping("/upload")
     public ResponseEntity<?> uploadFile(@RequestBody AttachmentRequest attachmentRequest) {
         try{
+            System.out.println("Received attachment request: " + attachmentRequest);
             Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
             Long uploaded_by = Long.parseLong(authentication.getName());
             System.out.println("Uploading file for user: " + uploaded_by);
