@@ -31,8 +31,6 @@ public class AttachmentController {
 
     @PostMapping("/testTrigger")
     public ResponseEntity<?> testTrigger(){
-        System.out.println("Triggering test connection to Object Storage Service");
-        System.out.println("Skibidi Toilet 2.0");
         return ResponseEntity.ok("Triggering test connection to Object Storage Service");
     }
 
