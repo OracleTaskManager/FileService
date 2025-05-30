@@ -192,34 +192,58 @@ steps:
       IMAGE_TAG="${REGISTRY}/${NAMESPACE}/${REPOSITORY}/${IMAGE_NAME}:${VERSION}"
       echo "🐳 Building Docker image: ${IMAGE_TAG}"
       
+      # Debug: Mostrar información de las variables
+      echo "🔍 DEBUG - Login Information:"
+      echo "REGISTRY: ${REGISTRY}"
+      echo "NAMESPACE: ${NAMESPACE}"
+      
       # Verificar que tenemos las credenciales necesarias
       if [ -z "$AUTH_TOKEN_OCID" ]; then
         echo "❌ AUTH_TOKEN_OCID not found. Please configure it in the build variables."
         exit 1
+      else
+        echo "✅ AUTH_TOKEN_OCID is present (length: ${#AUTH_TOKEN_OCID} characters)"
+        echo "First 10 chars of token: ${AUTH_TOKEN_OCID:0:10}..."
       fi
+      
+      # Construir username para login
+      DOCKER_USERNAME="${NAMESPACE}/a01281202@tec.mx"
+      echo "🔍 Attempting login with username: ${DOCKER_USERNAME}"
       
       echo "🔐 Logging into Docker registries..."
       
-      # Login a Docker Hub para evitar rate limits
-      echo "${AUTH_TOKEN_OCID}" | docker login -u "${NAMESPACE}/a01281202@tec.mx" --password-stdin
+      # Intentar login a Docker Hub (aunque probablemente falle, para debug)
+      echo "Trying Docker Hub login..."
+      echo "${AUTH_TOKEN_OCID}" | docker login -u "${DOCKER_USERNAME}" --password-stdin 2>&1
       login_result=$?
       
       if [ $login_result -eq 0 ]; then
         echo "✅ Successfully logged into Docker Hub"
       else
-        echo "⚠️ Docker Hub login failed (exit code: $login_result)"
+        echo "⚠️ Docker Hub login failed (expected, exit code: $login_result)"
       fi
       
       # Login a Oracle Container Registry
-      echo "${AUTH_TOKEN_OCID}" | docker login ${REGISTRY} -u "${NAMESPACE}/a01281202@tec.mx" --password-stdin
+      echo "Trying Oracle Container Registry login..."
+      echo "Registry URL: ${REGISTRY}"
+      echo "${AUTH_TOKEN_OCID}" | docker login ${REGISTRY} -u "${DOCKER_USERNAME}" --password-stdin 2>&1
       ocr_login_result=$?
       
       if [ $ocr_login_result -eq 0 ]; then
         echo "✅ Successfully logged into Oracle Container Registry"
       else
         echo "❌ Failed to login to Oracle Container Registry (exit code: $ocr_login_result)"
-        echo "This might cause issues pushing the final image"
+        echo "Will proceed with build using alternative base image"
+      
+        # Cambiar inmediatamente a imagen Oracle para evitar rate limits
+        echo "🔄 Switching to Oracle OpenJDK base image to avoid Docker Hub rate limits..."
+        sed -i '1s|.*|FROM container-registry.oracle.com/java/openjdk:17-jre|' Dockerfile
+        echo "✅ Dockerfile updated to use Oracle base image"
       fi
+      
+      # Mostrar el Dockerfile que vamos a usar
+      echo "📋 Current Dockerfile (first 5 lines):"
+      head -5 Dockerfile
       
       # Intentar el build
       echo "🚀 Starting Docker build..."
@@ -227,55 +251,27 @@ steps:
       build_result=$?
       
       if [ $build_result -ne 0 ]; then
-        echo "❌ Docker build failed with eclipse-temurin, trying alternative image..."
-      
-        # Crear Dockerfile con imagen alternativa
-        cat > Dockerfile << 'EOF'
-        FROM container-registry.oracle.com/java/openjdk:17-jre
-      
-        WORKDIR /app
-      
-        RUN mkdir -p /wallet /oci-keys
-      
-        COPY build/FileService-0.0.1-SNAPSHOT.jar /app/app.jar
-        COPY build/wallet/ /wallet/
-        COPY build/oci-keys/ /oci-keys/
-      
-        RUN chmod 755 /app/app.jar
-        RUN chmod 600 /wallet/* /oci-keys/* 2>/dev/null || true
-      
-        ENV TNS_ADMIN=/wallet
-        ENV ORACLE_HOME=/wallet
-        ENV LD_LIBRARY_PATH=/wallet
-        ENV OCI_PRIVATE_KEY_PATH=/oci-keys/oci-private-key.pem
-      
-        EXPOSE 8082
-      
-        ENTRYPOINT ["java", "-Djava.security.egd=file:/dev/./urandom", "-jar", "/app/app.jar"]
-        EOF
-      
-        echo "🔄 Retrying build with Oracle OpenJDK image..."
-        docker build --no-cache -t "${IMAGE_TAG}" .
-        build_result=$?
-      fi
-      
-      if [ $build_result -ne 0 ]; then
-        echo "❌ Docker build failed even with alternative image"
+        echo "❌ Docker build failed, exit code: $build_result"
         exit 1
       fi
       
       echo "✅ Docker image built successfully!"
       
-      # Push the image to Oracle Container Registry
-      echo "📤 Pushing image to registry..."
-      docker push "${IMAGE_TAG}"
-      push_result=$?
+      # Solo intentar push si el login a OCR fue exitoso
+      if [ $ocr_login_result -eq 0 ]; then
+        echo "📤 Pushing image to registry..."
+        docker push "${IMAGE_TAG}"
+        push_result=$?
       
-      if [ $push_result -eq 0 ]; then
-        echo "✅ Image pushed successfully to registry!"
+        if [ $push_result -eq 0 ]; then
+          echo "✅ Image pushed successfully to registry!"
+        else
+          echo "❌ Failed to push image to registry (exit code: $push_result)"
+          exit 1
+        fi
       else
-        echo "❌ Failed to push image to registry (exit code: $push_result)"
-        exit 1
+        echo "⚠️ Skipping push due to registry login failure"
+        echo "Image built locally: ${IMAGE_TAG}"
       fi
       
       # Exportar variables
