@@ -33,6 +33,7 @@ public class AttachmentController {
 
     @GetMapping("/demo")
     public String demo(){
+        System.out.println("File Service is running!");
         return "File Service is running!";
     }
 
