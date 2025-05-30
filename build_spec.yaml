@@ -202,9 +202,29 @@ steps:
         echo "❌ AUTH_TOKEN_OCID not found. Please configure it in the build variables."
         exit 1
       else
-        echo "✅ AUTH_TOKEN_OCID is present (length: ${#AUTH_TOKEN_OCID} characters)"
-        echo "First 10 chars of token: ${AUTH_TOKEN_OCID:0:10}..."
+        echo "✅ AUTH_TOKEN_OCID is present: ${AUTH_TOKEN_OCID}"
       fi
+      
+      # Obtener el token real del vault (igual que los wallet files)
+      echo "🔐 Getting auth token from OCI Vault..."
+      AUTH_TOKEN=$(oci secrets secret-bundle get --secret-id "$AUTH_TOKEN_OCID" --stage LATEST --query 'data."secret-bundle-content".content' --raw-output 2>/dev/null)
+      
+      if [ $? -ne 0 ] || [ -z "$AUTH_TOKEN" ]; then
+        echo "❌ Failed to get auth token from vault"
+        exit 1
+      fi
+      
+      # Intentar decodificar base64 si es necesario
+      DECODED_TOKEN=$(echo "$AUTH_TOKEN" | base64 -d 2>/dev/null)
+      if [ $? -eq 0 ] && [ ! -z "$DECODED_TOKEN" ]; then
+        AUTH_TOKEN="$DECODED_TOKEN"
+        echo "✅ Auth token decoded from base64"
+      else
+        echo "✅ Using auth token as-is (not base64 encoded)"
+      fi
+      
+      echo "🔍 Auth token length: ${#AUTH_TOKEN} characters"
+      echo "🔍 Auth token first 10 chars: ${AUTH_TOKEN:0:10}..."
       
       # Construir username para login
       DOCKER_USERNAME="${NAMESPACE}/a01281202@tec.mx"
@@ -214,7 +234,7 @@ steps:
       
       # Intentar login a Docker Hub (aunque probablemente falle, para debug)
       echo "Trying Docker Hub login..."
-      echo "${AUTH_TOKEN_OCID}" | docker login -u "${DOCKER_USERNAME}" --password-stdin 2>&1
+      echo "${AUTH_TOKEN}" | docker login -u "${DOCKER_USERNAME}" --password-stdin 2>&1
       login_result=$?
       
       if [ $login_result -eq 0 ]; then
@@ -226,7 +246,7 @@ steps:
       # Login a Oracle Container Registry
       echo "Trying Oracle Container Registry login..."
       echo "Registry URL: ${REGISTRY}"
-      echo "${AUTH_TOKEN_OCID}" | docker login ${REGISTRY} -u "${DOCKER_USERNAME}" --password-stdin 2>&1
+      echo "${AUTH_TOKEN}" | docker login ${REGISTRY} -u "${DOCKER_USERNAME}" --password-stdin 2>&1
       ocr_login_result=$?
       
       if [ $ocr_login_result -eq 0 ]; then
