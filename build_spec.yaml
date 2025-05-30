@@ -141,13 +141,18 @@ steps:
       echo "📋 Final wallet contents:"
       ls -la wallet/ oci-keys/
       
-      # Reporte final
+      # Verificar archivos críticos con información detallada
       echo "🔍 Final verification:"
       for file in wallet/keystore.jks wallet/truststore.jks wallet/cwallet.sso wallet/tnsnames.ora; do
         if [ -f "$file" ]; then
           size=$(wc -c < "$file")
           if [ "$size" -gt 0 ]; then
             echo "✅ $file: ${size} bytes"
+            # Para archivos críticos, mostrar los primeros bytes en hex
+            if [[ "$file" == *".jks" ]] || [[ "$file" == *".sso" ]]; then
+              signature=$(xxd -l 8 -p "$file" 2>/dev/null | tr '[:lower:]' '[:upper:]')
+              echo "   📋 File signature: $signature"
+            fi
           else
             echo "❌ $file: EMPTY!"
           fi
@@ -155,6 +160,18 @@ steps:
           echo "❌ $file: MISSING!"
         fi
       done
+      
+      # Verificar permisos y propietario
+      echo "🔍 Wallet permissions and ownership:"
+      ls -la wallet/
+      
+      # Verificar que sqlnet.ora apunte al directorio correcto
+      echo "🔍 Checking sqlnet.ora content:"
+      if [ -f "wallet/sqlnet.ora" ]; then
+        cat wallet/sqlnet.ora
+      else
+        echo "❌ sqlnet.ora not found!"
+      fi
 
   - type: Command
     name: "Modify application.properties"
