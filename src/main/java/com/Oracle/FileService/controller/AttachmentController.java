@@ -12,9 +12,11 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.InputStream;
 import java.util.List;
 
 @RestController
@@ -40,38 +42,40 @@ public class AttachmentController {
     }
 
     @PostMapping("/upload")
-    public ResponseEntity<?> uploadFile(@RequestBody AttachmentRequest attachmentRequest) {
-        try{
+    public ResponseEntity<?> uploadFile(
+            @RequestParam("file") MultipartFile file,
+            @RequestParam("taskId") Long taskId) {
+
+        try {
             Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
             Long uploaded_by = Long.parseLong(authentication.getName());
             System.out.println("Uploading file for user: " + uploaded_by);
 
-            String filePath = attachmentRequest.fileUrl();
-            File file = new File(filePath);
-
-            if(!file.exists()){
-                return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("File does not exist");
+            if (file.isEmpty()) {
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                        .body("File is empty");
             }
 
-            String fileName = file.getName();
+            String fileName = file.getOriginalFilename();
+            InputStream fileInputStream = file.getInputStream();
+            long fileSize = file.getSize();
 
-            FileInputStream fileInputStream = new FileInputStream(file);
+            String uploadedParUrl = StorageService.uploadFile(fileInputStream, fileName, fileSize);
 
-            String uploadedParUrl = StorageService.uploadFile(fileInputStream,fileName, file.length());
-
-            Attachment savedAttachment = attachmentService.createAttachment(attachmentRequest.taskId(), uploadedParUrl, uploaded_by);
+            Attachment savedAttachment = attachmentService.createAttachment(taskId, uploadedParUrl, uploaded_by);
             AttachmentResponse attachmentResponse = new AttachmentResponse(
                     savedAttachment.getAttachment_id(),
                     savedAttachment.getFile_url(),
                     savedAttachment.getTaskId(),
                     savedAttachment.getUploaded_by());
+
             return ResponseEntity.ok(attachmentResponse);
 
-        } catch(Exception e){
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Error uploading file: " + e.getMessage());
+        } catch(Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body("Error uploading file: " + e.getMessage());
         }
     }
-
     @GetMapping("/")
     @PreAuthorize("hasRole('Manager')")
     public ResponseEntity<?> getAllAttachments() {
