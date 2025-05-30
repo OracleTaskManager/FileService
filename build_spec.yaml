@@ -261,20 +261,9 @@ steps:
       fi
       
       echo "✅ Docker image built successfully!"
+      echo "🏷️ Image tagged as: ${IMAGE_TAG}"
       
-      # Push the image to Oracle Container Registry
-      echo "📤 Pushing image to registry..."
-      docker push "${IMAGE_TAG}"
-      push_result=$?
-      
-      if [ $push_result -eq 0 ]; then
-        echo "✅ Image pushed successfully to registry!"
-      else
-        echo "❌ Failed to push image to registry (exit code: $push_result)"
-        exit 1
-      fi
-      
-      # Exportar variables
+      # Exportar variables para el siguiente stage
       export IMAGE_FULL_NAME="${IMAGE_TAG}"
       export VERSION="${VERSION}"
       
