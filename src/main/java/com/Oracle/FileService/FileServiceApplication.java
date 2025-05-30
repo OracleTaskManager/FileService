@@ -9,10 +9,8 @@ public class FileServiceApplication {
 		Dotenv dotenv = Dotenv.configure()
 				.ignoreIfMissing() // Optional: avoids crash if .env is missing
 				.load();
-
 		System.setProperty("JWT_SECRET_ORACLE", dotenv.get("JWT_SECRET_ORACLE"));
 		System.setProperty("DB_PASSWORD", dotenv.get("DB_PASSWORD"));
 		SpringApplication.run(FileServiceApplication.class, args);
 	}
-
 }

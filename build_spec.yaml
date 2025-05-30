@@ -16,35 +16,30 @@ env:
 
 steps:
   - type: Command
-    name: "Install Java 17 - Alternative Method"
+    name: "Install Java 17"
     timeoutInSeconds: 600
     command: |
-      echo "🔧 Installing Java 17 using alternative method..."
-      
+      echo "🔧 Installing Java 17..."
       cd /opt
       wget -q https://corretto.aws/downloads/latest/amazon-corretto-17-x64-linux-jdk.tar.gz
       tar -xzf amazon-corretto-17-x64-linux-jdk.tar.gz
       
       JAVA17_DIR=$(find /opt -maxdepth 1 -name "amazon-corretto-17*" -type d | head -1)
-      echo "Java 17 directory: $JAVA17_DIR"
-      
       ln -sf "$JAVA17_DIR" /opt/java17
       echo "✅ Java 17 installed successfully"
 
   - type: Command
-    name: "Recreate wallet files from secrets - Enhanced JKS handling"
+    name: "Recreate wallet files - SSO ONLY approach"
     timeoutInSeconds: 300
     command: |
       mkdir -p wallet oci-keys
       
-      # Función mejorada específicamente para archivos JKS
-      get_secret_enhanced() {
+      get_secret() {
         local secret_id=$1
         local output_file=$2
         local is_double_encoded=${3:-false}
-        local file_type=${4:-"text"}  # "jks", "binary", "text"
       
-        echo "🔐 Getting secret for: $(basename $output_file) (type: $file_type)"
+        echo "Getting secret for: $(basename $output_file)"
       
         local content=$(oci secrets secret-bundle get --secret-id "$secret_id" --stage LATEST --query 'data."secret-bundle-content".content' --raw-output 2>/dev/null)
         if [ $? -ne 0 ] || [ -z "$content" ]; then
@@ -52,139 +47,142 @@ steps:
           return 1
         fi
       
-        echo "🔍 Raw content length: ${#content} chars"
-      
-        # Primera decodificación (siempre necesaria por OCI Vault)
-        local decoded_once
-        if ! decoded_once=$(echo "$content" | base64 -d 2>/dev/null); then
-          echo "❌ Failed first base64 decode for $(basename $output_file)"
+        local decoded_once=$(echo "$content" | base64 -d 2>/dev/null)
+        if [ $? -ne 0 ]; then
+          echo "❌ Failed first base64 decode"
           return 1
         fi
       
-        echo "🔍 After first decode length: ${#decoded_once} chars"
-      
-        # Para archivos JKS, necesitamos manejo especial
-        if [ "$file_type" = "jks" ]; then
-          echo "🔧 Special JKS handling..."
-      
-          # Intentar múltiples métodos de decodificación
-          local final_content=""
-      
-          if [ "$is_double_encoded" = true ]; then
-            echo "🔄 Trying double base64 decode..."
-            if final_content=$(echo "$decoded_once" | base64 -d 2>/dev/null); then
-              echo "✅ Double decode successful"
-            else
-              echo "⚠️ Double decode failed, trying single decode"
-              final_content="$decoded_once"
-            fi
-          else
-            final_content="$decoded_once"
-          fi
-      
-          # Escribir usando printf para mantener bytes exactos
-          printf '%s' "$final_content" > "$output_file"
-      
-          # Verificación específica para JKS
-          local file_size=$(wc -c < "$output_file")
-          echo "📏 JKS file size: $file_size bytes"
-      
-          if [ "$file_size" -gt 0 ]; then
-            # Verificar magic number de JKS (0xFEEDFEED)
-            local jks_signature=$(hexdump -C "$output_file" | head -1 | cut -d' ' -f2-5 | tr -d ' ')
-            echo "🔍 JKS hex signature: $jks_signature"
-      
-            if [[ "$jks_signature" == "feedfeed"* ]] || [[ "$jks_signature" == "FEEDFEED"* ]]; then
-              echo "✅ Valid JKS signature detected"
-            else
-              echo "⚠️ Invalid JKS signature, trying alternative decode methods..."
-      
-              # Intentar decodificación directa sin base64
-              echo "$content" > "$output_file.raw"
-              if hexdump -C "$output_file.raw" | head -1 | grep -q "feedfeed\|FEEDFEED"; then
-                echo "✅ Raw content is valid JKS"
-                mv "$output_file.raw" "$output_file"
-              else
-                rm -f "$output_file.raw"
-                echo "❌ Unable to get valid JKS format"
-              fi
-            fi
-          fi
-      
-        else
-          # Manejo normal para otros tipos de archivo
-          if [ "$is_double_encoded" = true ]; then
-            echo "🔄 Applying second base64 decode..."
-            if decoded_twice=$(echo "$decoded_once" | base64 -d 2>/dev/null); then
-              echo "$decoded_twice" > "$output_file"
-              echo "✅ Double-decoded successfully"
-            else
-              echo "⚠️ Second decode failed, using single decode"
-              echo "$decoded_once" > "$output_file"
-            fi
+        if [ "$is_double_encoded" = true ]; then
+          local decoded_twice=$(echo "$decoded_once" | base64 -d 2>/dev/null)
+          if [ $? -eq 0 ] && [ ! -z "$decoded_twice" ]; then
+            echo "$decoded_twice" > "$output_file"
           else
             echo "$decoded_once" > "$output_file"
-            echo "✅ Single-decoded successfully"
           fi
+        else
+          echo "$decoded_once" > "$output_file"
         fi
       
-        local final_size=$(wc -c < "$output_file")
-        echo "📏 Final file size: $final_size bytes"
-      
+        local file_size=$(wc -c < "$output_file")
+        echo "📏 Final file size: $file_size bytes"
         return 0
       }
       
-      echo "🔐 Processing wallet secrets with enhanced JKS handling..."
+      echo "🔐 Processing wallet secrets (SSO-only approach)..."
       
-      # Archivos de texto plano (single decode)
-      get_secret_enhanced "$WALLET_TNSNAMES_ORA_OCID" "wallet/tnsnames.ora" false "text" || true
-      get_secret_enhanced "$WALLET_SQLNET_ORA_OCID" "wallet/sqlnet.ora" false "text" || true  
-      get_secret_enhanced "$WALLET_OJDBC_PROPERTIES_OCID" "wallet/ojdbc.properties" false "text" || true
-      get_secret_enhanced "$WALLET_EWALLET_PEM_OCID" "wallet/ewallet.pem" false "text" || true
-      get_secret_enhanced "$OBJECT_STORAGE_PRIVATE_KEY_OCID" "oci-keys/oci-private-key.pem" false "text" || true
+      # Archivos esenciales
+      get_secret "$WALLET_TNSNAMES_ORA_OCID" "wallet/tnsnames.ora" false || true
+      get_secret "$WALLET_SQLNET_ORA_OCID" "wallet/sqlnet.ora" false || true  
+      get_secret "$WALLET_OJDBC_PROPERTIES_OCID" "wallet/ojdbc.properties" false || true
+      get_secret "$OBJECT_STORAGE_PRIVATE_KEY_OCID" "oci-keys/oci-private-key.pem" false || true
       
-      # Archivos binarios (double decode)
-      get_secret_enhanced "$WALLET_CWALLET_SSO_OCID" "wallet/cwallet.sso" true "binary" || true
-      get_secret_enhanced "$WALLET_EWALLET_P12_OCID" "wallet/ewallet.p12" true "binary" || true
+      # Solo cwallet.sso (que funciona correctamente)
+      get_secret "$WALLET_CWALLET_SSO_OCID" "wallet/cwallet.sso" true || true
       
-      # Archivos JKS con manejo especial
-      get_secret_enhanced "$WALLET_KEYSTORE_JKS_OCID" "wallet/keystore.jks" true "jks" || true
-      get_secret_enhanced "$WALLET_TRUSTSTORE_JKS_OCID" "wallet/truststore.jks" true "jks" || true
+      # IMPORTANTE: Configurar sqlnet.ora para SSO-only
+      echo "🔧 Configuring sqlnet.ora for SSO-only mode..."
+      cat > wallet/sqlnet.ora << 'EOF'
+      WALLET_LOCATION = (SOURCE = (METHOD = file) (METHOD_DATA = (DIRECTORY="/wallet")))
+      SSL_SERVER_DN_MATCH=yes
+      SQLNET.WALLET_OVERRIDE = TRUE
+      SSL_CLIENT_AUTHENTICATION = FALSE
+      EOF
       
-      # Configurar permisos
       chmod 600 wallet/* oci-keys/* 2>/dev/null || true
       
-      echo "✅ Enhanced wallet processing completed"
-      echo "📋 Final wallet verification:"
+      echo "✅ SSO-only wallet processing completed"
+
+  - type: Command
+    name: "Verify Wallet Files"
+    timeoutInSeconds: 120
+    command: |
+      echo "🔍 Verificando archivos de wallet..."
       
-      for file in wallet/keystore.jks wallet/truststore.jks wallet/cwallet.sso; do
-        if [ -f "$file" ]; then
-          size=$(wc -c < "$file")
-          echo "📄 $file: ${size} bytes"
+      WALLET_DIR="wallet"
+      ERRORS=0
       
-          if [ "$size" -gt 0 ]; then
-            # Mostrar hexdump de los primeros bytes
-            echo "   🔍 Hex dump (first 16 bytes):"
-            hexdump -C "$file" | head -1 || echo "   ❌ Cannot read hex dump"
+      # Función para verificar archivos
+      verify_file() {
+          local file=$1
+          local expected_type=$2
+          local min_size=${3:-1}
       
-            # Para JKS, verificar estructura
-            if [[ "$file" == *.jks ]]; then
-              if file "$file" | grep -q "Java KeyStore\|data"; then
-                echo "   ✅ File type verification passed"
-              else
-                echo "   ⚠️ File type verification failed: $(file "$file")"
-              fi
-            fi
-          else
-            echo "   ❌ File is empty!"
+          if [ ! -f "$file" ]; then
+              echo "❌ FALTA: $file"
+              ((ERRORS++))
+              return 1
           fi
-        else
-          echo "❌ $file: MISSING!"
-        fi
-      done
       
-      echo "🔍 sqlnet.ora content:"
-      cat wallet/sqlnet.ora 2>/dev/null || echo "❌ Cannot read sqlnet.ora"
+          local size=$(wc -c < "$file")
+          if [ "$size" -lt "$min_size" ]; then
+              echo "❌ VACÍO: $file (${size} bytes)"
+              ((ERRORS++))
+              return 1
+          fi
+      
+          echo "✅ OK: $file (${size} bytes)"
+      
+          # Verificaciones específicas por tipo
+          case "$expected_type" in
+              "sso")
+                  if file "$file" | grep -q "data"; then
+                      echo "   ✅ Archivo SSO válido"
+                  else
+                      echo "   ⚠️ Archivo SSO puede estar corrupto"
+                  fi
+                  ;;
+              "pem")
+                  if grep -q "BEGIN" "$file" && grep -q "END" "$file"; then
+                      echo "   ✅ Estructura PEM válida"
+                  else
+                      echo "   ⚠️ Estructura PEM inválida"
+                      ((ERRORS++))
+                  fi
+                  ;;
+          esac
+      
+          return 0
+      }
+      
+      # Verificar archivos críticos
+      echo "📋 Verificando archivos críticos del wallet..."
+      
+      verify_file "$WALLET_DIR/tnsnames.ora" "text" 100
+      verify_file "$WALLET_DIR/sqlnet.ora" "text" 50
+      verify_file "$WALLET_DIR/cwallet.sso" "sso" 1000
+      
+      if [ -f "oci-keys/oci-private-key.pem" ]; then
+          verify_file "oci-keys/oci-private-key.pem" "pem" 1000
+      fi
+      
+      # Verificar configuración de sqlnet.ora
+      echo ""
+      echo "🔧 Verificando configuración de sqlnet.ora..."
+      if [ -f "$WALLET_DIR/sqlnet.ora" ]; then
+          echo "Contenido actual:"
+          cat "$WALLET_DIR/sqlnet.ora"
+      
+          if grep -q "WALLET_LOCATION.*wallet" "$WALLET_DIR/sqlnet.ora"; then
+              echo "✅ WALLET_LOCATION configurado correctamente"
+          else
+              echo "❌ WALLET_LOCATION no configurado correctamente"
+              ((ERRORS++))
+          fi
+      else
+          echo "❌ sqlnet.ora no encontrado"
+          ((ERRORS++))
+      fi
+      
+      # Resultado final
+      echo ""
+      echo "===================="
+      if [ $ERRORS -eq 0 ]; then
+          echo "✅ VERIFICACIÓN COMPLETA: Wallet parece estar correcto"
+      else
+          echo "❌ VERIFICACIÓN FALLIDA: $ERRORS errores encontrados"
+          exit 1
+      fi
 
   - type: Command
     name: "Modify application.properties"
@@ -192,85 +190,41 @@ steps:
     command: |
       if [ -f "src/main/resources/application.properties" ]; then
         echo "🔧 Modifying application.properties..."
-      
         sed -i 's|TNS_ADMIN=C:/Users/cesar/Wallet_TelegramBotDatabase|TNS_ADMIN=/wallet|g' src/main/resources/application.properties
         sed -i 's|oci.private-key-path=${OCI_PRIVATE_KEY_PATH:C:/Users/cesar/ObjectStorageKeys/a01281202@tec.mx_2025-03-22T10_08_12.916Z.pem}|oci.private-key-path=/oci-keys/oci-private-key.pem|g' src/main/resources/application.properties
-      
         echo "✅ application.properties modified"
-        echo "📋 Current application.properties:"
-        cat src/main/resources/application.properties
       fi
 
   - type: Command
-    name: "Build with Maven using Java 17"
+    name: "Build with Maven"
     timeoutInSeconds: 600
     command: |
       export JAVA_HOME=/opt/java17
       export PATH=$JAVA_HOME/bin:$PATH
       
-      echo "☕ Verifying Java installation:"
-      java -version
-      javac -version
-      
-      echo "🚀 Building with Maven..."
       mvn clean package -DskipTests
-      
-      echo "📦 Build completed, checking results:"
-      ls -la target/
       
       if [ ! -f "target/FileService-0.0.1-SNAPSHOT.jar" ]; then
         echo "❌ JAR file not found!"
         exit 1
       fi
       
-      JAR_SIZE=$(stat -c%s "target/FileService-0.0.1-SNAPSHOT.jar" 2>/dev/null || stat -f%z "target/FileService-0.0.1-SNAPSHOT.jar")
-      echo "📦 JAR size: $JAR_SIZE bytes"
-      
       echo "✅ Maven build successful!"
 
   - type: Command
-    name: "Prepare Docker build with wallet validation"
+    name: "Prepare Docker build"
     timeoutInSeconds: 120
     command: |
       mkdir -p build build/wallet build/oci-keys
       
-      echo "📦 Copying JAR to build directory..."
       cp target/FileService-0.0.1-SNAPSHOT.jar build/
-      
-      echo "📁 Copying wallet and keys..."
       cp -r wallet/* build/wallet/ 2>/dev/null || true
       cp -r oci-keys/* build/oci-keys/ 2>/dev/null || true
       
-      echo "🔍 Validating wallet files before Docker build:"
-      for file in build/wallet/keystore.jks build/wallet/truststore.jks; do
-        if [ -f "$file" ]; then
-          size=$(wc -c < "$file")
-          if [ "$size" -gt 0 ]; then
-            echo "✅ $file: ${size} bytes"
-            # Test with keytool if available
-            if command -v keytool >/dev/null 2>&1; then
-              if keytool -list -keystore "$file" -storepass changeit >/dev/null 2>&1; then
-                echo "   ✅ JKS structure valid"
-              else
-                echo "   ⚠️ JKS structure may have issues (this might be OK if password is different)"
-              fi
-            fi
-          else
-            echo "❌ $file is empty - this will cause issues!"
-          fi
-        else
-          echo "❌ $file missing!"
-        fi
-      done
-      
-      echo "🐳 Creating enhanced Dockerfile..."
       cat > Dockerfile << 'EOF'
       FROM container-registry.oracle.com/graalvm/jdk:17
       
       WORKDIR /app
-      
-      # Install debugging tools
-      RUN microdnf install -y file hexdump
       
       RUN mkdir -p /wallet /oci-keys
       
@@ -281,37 +235,17 @@ steps:
       RUN chmod 755 /app/app.jar
       RUN chmod 600 /wallet/* /oci-keys/* 2>/dev/null || true
       
-      # Variables de entorno Oracle mejoradas
       ENV TNS_ADMIN=/wallet
       ENV ORACLE_HOME=/wallet
       ENV LD_LIBRARY_PATH=/wallet
       ENV OCI_PRIVATE_KEY_PATH=/oci-keys/oci-private-key.pem
       
-      # Verificaciones exhaustivas en build time
-      RUN echo "=== COMPREHENSIVE WALLET DEBUG ===" && \
-      ls -la /wallet/ && \
-      echo "=== FILE TYPES ===" && \
-      file /wallet/* && \
-      echo "=== JKS FILES VERIFICATION ===" && \
-      for jks in /wallet/*.jks; do \
-      if [ -f "$jks" ]; then \
-      echo "Checking $jks:"; \
-    echo "  Size: $(wc -c < "$jks") bytes"; \
-    echo "  Hex signature: $(hexdump -C "$jks" | head -1)"; \
-      fi; \
-      done && \
-      echo "=== SQLNET.ORA CONTENT ===" && \
-      cat /wallet/sqlnet.ora 2>/dev/null || echo "sqlnet.ora not found" && \
-      echo "=== TNSNAMES.ORA CONTENT (first 5 lines) ===" && \
-      head -5 /wallet/tnsnames.ora 2>/dev/null || echo "tnsnames.ora not found"
+      RUN echo "=== WALLET SSO-ONLY DEBUG ===" && ls -la /wallet/ && echo "=== CWALLET.SSO CHECK ===" && if [ -f "/wallet/cwallet.sso" ]; then echo "cwallet.sso size: $(wc -c < /wallet/cwallet.sso) bytes"; else echo "cwallet.sso NOT FOUND"; fi && echo "=== SQLNET.ORA CONTENT ===" && cat /wallet/sqlnet.ora
       
       EXPOSE 8082
       
-      # Comando de inicio mejorado con más información de debug
-      ENTRYPOINT ["java", "-Djava.security.egd=file:/dev/./urandom", "-Doracle.net.wallet_location=/wallet", "-Doracle.net.tns_admin=/wallet", "-Djavax.net.debug=ssl", "-jar", "/app/app.jar"]
+      ENTRYPOINT ["java", "-Djava.security.egd=file:/dev/./urandom", "-Doracle.net.wallet_location=/wallet", "-Doracle.net.tns_admin=/wallet", "-jar", "/app/app.jar"]
       EOF
-      
-      echo "✅ Docker build context prepared with enhanced validation"
 
   - type: Command
     name: "Build and Push Docker image"
@@ -324,17 +258,9 @@ steps:
       fi
       
       IMAGE_TAG="${REGISTRY}/${NAMESPACE}/${REPOSITORY}/${IMAGE_NAME}:${VERSION}"
-      echo "🐳 Building Docker image: ${IMAGE_TAG}"
       
       # Obtener auth token
-      echo "🔐 Getting auth token from OCI Vault..."
       AUTH_TOKEN=$(oci secrets secret-bundle get --secret-id "$AUTH_TOKEN_OCID" --stage LATEST --query 'data."secret-bundle-content".content' --raw-output 2>/dev/null)
-      
-      if [ $? -ne 0 ] || [ -z "$AUTH_TOKEN" ]; then
-        echo "❌ Failed to get auth token from vault"
-        exit 1
-      fi
-      
       DECODED_TOKEN=$(echo "$AUTH_TOKEN" | base64 -d 2>/dev/null)
       if [ $? -eq 0 ] && [ ! -z "$DECODED_TOKEN" ]; then
         AUTH_TOKEN="$DECODED_TOKEN"
@@ -342,23 +268,9 @@ steps:
       
       DOCKER_USERNAME="${NAMESPACE}/a01281202@tec.mx"
       
-      echo "🔐 Logging into Oracle Container Registry..."
       echo "${AUTH_TOKEN}" | docker login ${REGISTRY} -u "${DOCKER_USERNAME}" --password-stdin
       
-      if [ $? -ne 0 ]; then
-        echo "❌ Failed to login to Oracle Container Registry"
-        exit 1
-      fi
-      
-      echo "🚀 Starting Docker build..."
       docker build --no-cache -t "${IMAGE_TAG}" .
-      
-      if [ $? -ne 0 ]; then
-        echo "❌ Docker build failed"
-        exit 1
-      fi
-      
-      echo "✅ Docker image built successfully!"
       
       export IMAGE_FULL_NAME="${IMAGE_TAG}"
       export VERSION="${VERSION}"
