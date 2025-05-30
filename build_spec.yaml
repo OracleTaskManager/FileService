@@ -150,9 +150,9 @@ steps:
       cp -r wallet/* build/wallet/ 2>/dev/null || true
       cp -r oci-keys/* build/oci-keys/ 2>/dev/null || true
       
-      echo "Creating Dockerfile..."
+      echo "Creating Dockerfile (using Oracle base image to avoid rate limits)..."
       cat > Dockerfile << 'EOF'
-      FROM eclipse-temurin:17-jre
+      FROM container-registry.oracle.com/java/openjdk:17-jre
       
       WORKDIR /app
       
@@ -232,19 +232,8 @@ steps:
       
       echo "🔐 Logging into Docker registries..."
       
-      # Intentar login a Docker Hub (aunque probablemente falle, para debug)
-      echo "Trying Docker Hub login..."
-      echo "${AUTH_TOKEN}" | docker login -u "${DOCKER_USERNAME}" --password-stdin 2>&1
-      login_result=$?
-      
-      if [ $login_result -eq 0 ]; then
-        echo "✅ Successfully logged into Docker Hub"
-      else
-        echo "⚠️ Docker Hub login failed (expected, exit code: $login_result)"
-      fi
-      
-      # Login a Oracle Container Registry
-      echo "Trying Oracle Container Registry login..."
+      # Login a Oracle Container Registry (ya no necesitamos Docker Hub)
+      echo "Logging into Oracle Container Registry..."
       echo "Registry URL: ${REGISTRY}"
       echo "${AUTH_TOKEN}" | docker login ${REGISTRY} -u "${DOCKER_USERNAME}" --password-stdin 2>&1
       ocr_login_result=$?
@@ -253,12 +242,8 @@ steps:
         echo "✅ Successfully logged into Oracle Container Registry"
       else
         echo "❌ Failed to login to Oracle Container Registry (exit code: $ocr_login_result)"
-        echo "Will proceed with build using alternative base image"
-      
-        # Cambiar inmediatamente a imagen Oracle para evitar rate limits
-        echo "🔄 Switching to Oracle OpenJDK base image to avoid Docker Hub rate limits..."
-        sed -i '1s|.*|FROM container-registry.oracle.com/java/openjdk:17-jre|' Dockerfile
-        echo "✅ Dockerfile updated to use Oracle base image"
+        echo "This will cause issues pushing the final image"
+        exit 1
       fi
       
       # Mostrar el Dockerfile que vamos a usar
@@ -277,21 +262,16 @@ steps:
       
       echo "✅ Docker image built successfully!"
       
-      # Solo intentar push si el login a OCR fue exitoso
-      if [ $ocr_login_result -eq 0 ]; then
-        echo "📤 Pushing image to registry..."
-        docker push "${IMAGE_TAG}"
-        push_result=$?
+      # Push the image to Oracle Container Registry
+      echo "📤 Pushing image to registry..."
+      docker push "${IMAGE_TAG}"
+      push_result=$?
       
-        if [ $push_result -eq 0 ]; then
-          echo "✅ Image pushed successfully to registry!"
-        else
-          echo "❌ Failed to push image to registry (exit code: $push_result)"
-          exit 1
-        fi
+      if [ $push_result -eq 0 ]; then
+        echo "✅ Image pushed successfully to registry!"
       else
-        echo "⚠️ Skipping push due to registry login failure"
-        echo "Image built locally: ${IMAGE_TAG}"
+        echo "❌ Failed to push image to registry (exit code: $push_result)"
+        exit 1
       fi
       
       # Exportar variables
