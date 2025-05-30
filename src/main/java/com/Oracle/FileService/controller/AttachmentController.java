@@ -31,6 +31,11 @@ public class AttachmentController {
         this.attachmentService = attachmentService;
     }
 
+    @GetMapping("/demo")
+    public String demo(){
+        return "File Service is running!";
+    }
+
     @GetMapping("/test")
     public String testconnection(){
         return StorageService.testConnection();
