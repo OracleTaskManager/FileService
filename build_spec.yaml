@@ -150,9 +150,9 @@ steps:
       cp -r wallet/* build/wallet/ 2>/dev/null || true
       cp -r oci-keys/* build/oci-keys/ 2>/dev/null || true
       
-      echo "Creating Dockerfile (using Oracle base image to avoid rate limits)..."
+      echo "Creating Dockerfile (using GraalVM from Oracle registry)..."
       cat > Dockerfile << 'EOF'
-      FROM container-registry.oracle.com/java/openjdk:17-jre
+      FROM container-registry.oracle.com/graalvm/jdk:17
       
       WORKDIR /app
       
