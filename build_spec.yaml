@@ -137,6 +137,29 @@ steps:
       echo "✅ Maven build successful!"
 
   - type: Command
+    name: "Login to Docker registries"
+    timeoutInSeconds: 300
+    command: |
+      echo "🔐 Logging into Docker registries..."
+      
+      # Login a Oracle Cloud Container Registry
+      echo "Logging into Oracle Cloud Container Registry..."
+      echo "${AUTH_TOKEN_OCID}" | docker login ${REGISTRY} -u "${NAMESPACE}/a01281202@tec.mx" --password-stdin
+      
+      if [ $? -eq 0 ]; then
+        echo "✅ Successfully logged into Oracle Container Registry"
+      else
+        echo "⚠️ Failed to login to Oracle Container Registry, continuing anyway..."
+      fi
+      
+      # Opcional: Login a Docker Hub si quieres usar eclipse-temurin
+      # Si tienes credenciales de Docker Hub, descomenta estas líneas:
+      # echo "Logging into Docker Hub..."
+      # echo "${DOCKER_HUB_PASSWORD}" | docker login -u "${DOCKER_HUB_USERNAME}" --password-stdin
+      
+      echo "✅ Docker login process completed"
+
+  - type: Command
     name: "Prepare Docker build (GitHub Actions style)"
     timeoutInSeconds: 120
     command: |
@@ -150,16 +173,9 @@ steps:
       cp -r wallet/* build/wallet/ 2>/dev/null || true
       cp -r oci-keys/* build/oci-keys/ 2>/dev/null || true
       
-      echo "Creating Dockerfile with alternative base image..."
+      echo "Creating Dockerfile (back to eclipse-temurin since we're logged in)..."
       cat > Dockerfile << 'EOF'
-      # OPCIÓN 1: Usar Oracle Container Registry (recomendado para OCI)
-      FROM container-registry.oracle.com/java/openjdk:17-jre
-      
-      # OPCIÓN 2: Si la anterior no funciona, usar Amazon ECR Public
-      # FROM public.ecr.aws/amazoncorretto/amazoncorretto:17-jre
-      
-      # OPCIÓN 3: Si necesitas una imagen más específica, usar Red Hat UBI
-      # FROM registry.access.redhat.com/ubi8/openjdk-17-runtime:latest
+      FROM eclipse-temurin:17-jre
       
       WORKDIR /app
       
@@ -186,7 +202,7 @@ steps:
       ls -la build/
 
   - type: Command
-    name: "Build Docker image with retry mechanism"
+    name: "Build Docker image"
     timeoutInSeconds: 900
     command: |
       # Generar versión
@@ -199,55 +215,23 @@ steps:
       IMAGE_TAG="${REGISTRY}/${NAMESPACE}/${REPOSITORY}/${IMAGE_NAME}:${VERSION}"
       echo "🐳 Building Docker image: ${IMAGE_TAG}"
       
-      # Función para intentar el build con diferentes imágenes base
-      try_build_with_image() {
-        local base_image=$1
-        local attempt_name=$2
+      docker build --no-cache -t "${IMAGE_TAG}" .
       
-        echo "🔄 Trying build with ${attempt_name}: ${base_image}"
+      if [ $? -ne 0 ]; then
+        echo "❌ Docker build failed"
+        exit 1
+      fi
       
-        # Crear Dockerfile temporal con la imagen base especificada
-        sed "1s|.*|FROM ${base_image}|" Dockerfile > Dockerfile.tmp
+      echo "✅ Docker image built successfully!"
       
-        docker build --no-cache -f Dockerfile.tmp -t "${IMAGE_TAG}" . 2>&1
-        local result=$?
+      # Push the image to Oracle Container Registry
+      echo "📤 Pushing image to registry..."
+      docker push "${IMAGE_TAG}"
       
-        rm -f Dockerfile.tmp
-        return $result
-      }
-      
-      # Lista de imágenes base alternativas para intentar
-      declare -a base_images=(
-        "container-registry.oracle.com/java/openjdk:17-jre"
-        "public.ecr.aws/amazoncorretto/amazoncorretto:17-jre"
-        "registry.access.redhat.com/ubi8/openjdk-17-runtime:latest"
-        "ghcr.io/graalvm/jdk:java17"
-      )
-      
-      declare -a image_names=(
-        "Oracle Container Registry OpenJDK"
-        "Amazon Corretto (ECR Public)"
-        "Red Hat UBI OpenJDK"
-        "GraalVM JDK"
-      )
-      
-      build_success=false
-      
-      # Intentar con cada imagen base hasta que una funcione
-      for i in "${!base_images[@]}"; do
-        if try_build_with_image "${base_images[$i]}" "${image_names[$i]}"; then
-          echo "✅ Docker build successful with ${image_names[$i]}!"
-          build_success=true
-          break
-        else
-          echo "❌ Build failed with ${image_names[$i]}, trying next option..."
-          sleep 10  # Esperar un poco antes del siguiente intento
-        fi
-      done
-      
-      if [ "$build_success" = false ]; then
-        echo "❌ All Docker build attempts failed"
-        echo "💡 Suggestion: Try again later or configure Docker Hub authentication"
+      if [ $? -eq 0 ]; then
+        echo "✅ Image pushed successfully to registry!"
+      else
+        echo "❌ Failed to push image to registry"
         exit 1
       fi
       
