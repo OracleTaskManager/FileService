@@ -39,47 +39,122 @@ steps:
     name: "Recreate wallet files from secrets"
     timeoutInSeconds: 300
     command: |
-      # Usar el mismo código exitoso de GitHub Actions
+      # Usar función mejorada para obtener secrets con validación específica
+      mkdir -p wallet oci-keys
+
+  - type: Command
+    name: "Recreate wallet files from secrets"
+    timeoutInSeconds: 300
+    command: |
+      # Función inteligente para obtener secrets con detección automática de encoding
       mkdir -p wallet oci-keys
       
-      # Función para obtener secrets
       get_secret() {
         local secret_id=$1
         local output_file=$2
+        local is_double_encoded=${3:-false}  # true para archivos _B64
       
         echo "Getting secret for: $(basename $output_file)"
       
         local content=$(oci secrets secret-bundle get --secret-id "$secret_id" --stage LATEST --query 'data."secret-bundle-content".content' --raw-output 2>/dev/null)
         if [ $? -ne 0 ] || [ -z "$content" ]; then
-          echo "WARNING: Failed to get secret $secret_id, creating empty file"
+          echo "❌ Failed to get secret $secret_id"
           touch "$output_file"
           return 1
         fi
       
-        if echo "$content" | base64 -d > "$output_file" 2>/dev/null; then
-          echo "✅ Secret decoded for $(basename $output_file)"
-        else
+        echo "🔍 Raw content length: ${#content} chars"
+      
+        # Primera decodificación (siempre necesaria por OCI Vault)
+        local decoded_once=$(echo "$content" | base64 -d 2>/dev/null)
+        if [ $? -ne 0 ]; then
+          echo "❌ Failed first base64 decode for $(basename $output_file)"
           echo "$content" > "$output_file"
-          echo "✅ Secret saved for $(basename $output_file)"
+          return 1
         fi
+      
+        echo "🔍 After first decode length: ${#decoded_once} chars"
+      
+        # Si es archivo con doble encoding (_B64), decodificar otra vez
+        if [ "$is_double_encoded" = true ]; then
+          echo "🔄 Applying second base64 decode for _B64 file..."
+          local decoded_twice=$(echo "$decoded_once" | base64 -d 2>/dev/null)
+          if [ $? -eq 0 ] && [ ! -z "$decoded_twice" ]; then
+            echo "$decoded_twice" > "$output_file"
+            echo "✅ Double-decoded successfully for $(basename $output_file)"
+          else
+            echo "⚠️ Second decode failed, using single decode for $(basename $output_file)"
+            echo "$decoded_once" > "$output_file"
+          fi
+        else
+          # Single decode para archivos plaintext
+          echo "$decoded_once" > "$output_file"
+          echo "✅ Single-decoded successfully for $(basename $output_file)"
+        fi
+      
+        # Verificaciones específicas por tipo
+        local file_size=$(wc -c < "$output_file")
+        echo "📏 Final file size: $file_size bytes"
+      
+        if [ "$file_size" -eq 0 ]; then
+          echo "❌ WARNING: $(basename $output_file) is empty!"
+          return 1
+        fi
+      
+        # Verificar archivos JKS
+        if [[ "$output_file" == *.jks ]]; then
+          local file_signature=$(xxd -l 4 -p "$output_file" 2>/dev/null | tr '[:lower:]' '[:upper:]')
+          if [[ "$file_signature" == "FEEDFEED" ]]; then
+            echo "✅ JKS signature verified for $(basename $output_file)"
+          else
+            echo "⚠️ WARNING: Invalid JKS signature ($file_signature) for $(basename $output_file)"
+          fi
+        fi
+      
+        return 0
       }
       
-      # Recrear wallet files
-      get_secret "$WALLET_CWALLET_SSO_OCID" "wallet/cwallet.sso" || true
-      get_secret "$WALLET_TNSNAMES_ORA_OCID" "wallet/tnsnames.ora" || true
-      get_secret "$WALLET_SQLNET_ORA_OCID" "wallet/sqlnet.ora" || true
-      get_secret "$WALLET_EWALLET_P12_OCID" "wallet/ewallet.p12" || true
-      get_secret "$WALLET_KEYSTORE_JKS_OCID" "wallet/keystore.jks" || true
-      get_secret "$WALLET_OJDBC_PROPERTIES_OCID" "wallet/ojdbc.properties" || true
-      get_secret "$WALLET_EWALLET_PEM_OCID" "wallet/ewallet.pem" || true
-      get_secret "$WALLET_README_OCID" "wallet/README" || true
-      get_secret "$WALLET_TRUSTSTORE_JKS_OCID" "wallet/truststore.jks" || true
-      get_secret "$OBJECT_STORAGE_PRIVATE_KEY_OCID" "oci-keys/oci-private-key.pem" || true
+      echo "🔐 Processing wallet secrets with correct encoding..."
       
+      # Archivos guardados como PLAINTEXT (single decode)
+      get_secret "$WALLET_TNSNAMES_ORA_OCID" "wallet/tnsnames.ora" false || true
+      get_secret "$WALLET_SQLNET_ORA_OCID" "wallet/sqlnet.ora" false || true  
+      get_secret "$WALLET_OJDBC_PROPERTIES_OCID" "wallet/ojdbc.properties" false || true
+      get_secret "$WALLET_EWALLET_PEM_OCID" "wallet/ewallet.pem" false || true
+      get_secret "$OBJECT_STORAGE_PRIVATE_KEY_OCID" "oci-keys/oci-private-key.pem" false || true
+      
+      # Archivos guardados como BASE64 primero (double decode) 
+      get_secret "$WALLET_CWALLET_SSO_OCID" "wallet/cwallet.sso" true || true
+      get_secret "$WALLET_KEYSTORE_JKS_OCID" "wallet/keystore.jks" true || true
+      get_secret "$WALLET_TRUSTSTORE_JKS_OCID" "wallet/truststore.jks" true || true
+      get_secret "$WALLET_EWALLET_P12_OCID" "wallet/ewallet.p12" true || true
+      
+      # README - asumir plaintext si existe
+      if [ ! -z "$WALLET_README_OCID" ]; then
+        get_secret "$WALLET_README_OCID" "wallet/README" false || true
+      fi
+      
+      # Configurar permisos
       chmod 600 wallet/* oci-keys/* 2>/dev/null || true
       
-      echo "✅ Wallet files created"
+      echo "✅ Wallet processing completed"
+      echo "📋 Final wallet contents:"
       ls -la wallet/ oci-keys/
+      
+      # Reporte final
+      echo "🔍 Final verification:"
+      for file in wallet/keystore.jks wallet/truststore.jks wallet/cwallet.sso wallet/tnsnames.ora; do
+        if [ -f "$file" ]; then
+          size=$(wc -c < "$file")
+          if [ "$size" -gt 0 ]; then
+            echo "✅ $file: ${size} bytes"
+          else
+            echo "❌ $file: EMPTY!"
+          fi
+        else
+          echo "❌ $file: MISSING!"
+        fi
+      done
 
   - type: Command
     name: "Modify application.properties"
