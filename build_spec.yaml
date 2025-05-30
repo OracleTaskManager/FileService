@@ -137,7 +137,7 @@ steps:
       echo "✅ Maven build successful!"
 
   - type: Command
-    name: "Prepare Docker build (GitHub Actions style)"
+    name: "Prepare Docker build"
     timeoutInSeconds: 120
     command: |
       # Usar exactamente la misma estructura que GitHub Actions
@@ -150,7 +150,7 @@ steps:
       cp -r wallet/* build/wallet/ 2>/dev/null || true
       cp -r oci-keys/* build/oci-keys/ 2>/dev/null || true
       
-      echo "Creating Dockerfile (back to eclipse-temurin since we're logged in)..."
+      echo "Creating Dockerfile..."
       cat > Dockerfile << 'EOF'
       FROM eclipse-temurin:17-jre
       
@@ -179,7 +179,7 @@ steps:
       ls -la build/
 
   - type: Command
-    name: "Build and Push Docker image with authentication"
+    name: "Build and Push Docker image"
     timeoutInSeconds: 900
     command: |
       # Generar versión
@@ -198,7 +198,8 @@ steps:
         exit 1
       fi
       
-      echo "🔐 Logging into Docker Hub first..."
+      echo "🔐 Logging into Docker registries..."
+      
       # Login a Docker Hub para evitar rate limits
       echo "${AUTH_TOKEN_OCID}" | docker login -u "${NAMESPACE}/a01281202@tec.mx" --password-stdin
       login_result=$?
@@ -207,15 +208,9 @@ steps:
         echo "✅ Successfully logged into Docker Hub"
       else
         echo "⚠️ Docker Hub login failed (exit code: $login_result)"
-        echo "🔄 Trying with Docker Hub registry..."
-      
-        # Si el login falló, usar imagen alternativa
-        echo "Using alternative base image to avoid rate limits..."
-        sed -i '1s|.*|FROM container-registry.oracle.com/java/openjdk:17-jre|' Dockerfile
-        echo "✅ Switched to Oracle Container Registry base image"
       fi
       
-      echo "🔐 Also logging into Oracle Container Registry..."
+      # Login a Oracle Container Registry
       echo "${AUTH_TOKEN_OCID}" | docker login ${REGISTRY} -u "${NAMESPACE}/a01281202@tec.mx" --password-stdin
       ocr_login_result=$?
       
@@ -225,10 +220,6 @@ steps:
         echo "❌ Failed to login to Oracle Container Registry (exit code: $ocr_login_result)"
         echo "This might cause issues pushing the final image"
       fi
-      
-      # Verificar contenido del Dockerfile
-      echo "📋 Current Dockerfile:"
-      head -5 Dockerfile
       
       # Intentar el build
       echo "🚀 Starting Docker build..."
@@ -240,37 +231,37 @@ steps:
       
         # Crear Dockerfile con imagen alternativa
         cat > Dockerfile << 'EOF'
-      FROM container-registry.oracle.com/java/openjdk:17-jre
+        FROM container-registry.oracle.com/java/openjdk:17-jre
       
-      WORKDIR /app
+        WORKDIR /app
       
-      RUN mkdir -p /wallet /oci-keys
+        RUN mkdir -p /wallet /oci-keys
       
-      COPY build/FileService-0.0.1-SNAPSHOT.jar /app/app.jar
-      COPY build/wallet/ /wallet/
-      COPY build/oci-keys/ /oci-keys/
+        COPY build/FileService-0.0.1-SNAPSHOT.jar /app/app.jar
+        COPY build/wallet/ /wallet/
+        COPY build/oci-keys/ /oci-keys/
       
-      RUN chmod 755 /app/app.jar
-      RUN chmod 600 /wallet/* /oci-keys/* 2>/dev/null || true
+        RUN chmod 755 /app/app.jar
+        RUN chmod 600 /wallet/* /oci-keys/* 2>/dev/null || true
       
-      ENV TNS_ADMIN=/wallet
-      ENV ORACLE_HOME=/wallet
-      ENV LD_LIBRARY_PATH=/wallet
-      ENV OCI_PRIVATE_KEY_PATH=/oci-keys/oci-private-key.pem
+        ENV TNS_ADMIN=/wallet
+        ENV ORACLE_HOME=/wallet
+        ENV LD_LIBRARY_PATH=/wallet
+        ENV OCI_PRIVATE_KEY_PATH=/oci-keys/oci-private-key.pem
       
-      EXPOSE 8082
+        EXPOSE 8082
       
-      ENTRYPOINT ["java", "-Djava.security.egd=file:/dev/./urandom", "-jar", "/app/app.jar"]
-      EOF
+        ENTRYPOINT ["java", "-Djava.security.egd=file:/dev/./urandom", "-jar", "/app/app.jar"]
+        EOF
       
-      echo "🔄 Retrying build with Oracle OpenJDK image..."
-      docker build --no-cache -t "${IMAGE_TAG}" .
-      build_result=$?
+        echo "🔄 Retrying build with Oracle OpenJDK image..."
+        docker build --no-cache -t "${IMAGE_TAG}" .
+        build_result=$?
       fi
       
       if [ $build_result -ne 0 ]; then
-      echo "❌ Docker build failed even with alternative image"
-      exit 1
+        echo "❌ Docker build failed even with alternative image"
+        exit 1
       fi
       
       echo "✅ Docker image built successfully!"
@@ -281,10 +272,10 @@ steps:
       push_result=$?
       
       if [ $push_result -eq 0 ]; then
-      echo "✅ Image pushed successfully to registry!"
+        echo "✅ Image pushed successfully to registry!"
       else
-    echo "❌ Failed to push image to registry (exit code: $push_result)"
-      exit 1
+        echo "❌ Failed to push image to registry (exit code: $push_result)"
+        exit 1
       fi
       
       # Exportar variables
