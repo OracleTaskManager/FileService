@@ -137,29 +137,6 @@ steps:
       echo "✅ Maven build successful!"
 
   - type: Command
-    name: "Login to Docker registries"
-    timeoutInSeconds: 300
-    command: |
-      echo "🔐 Logging into Docker registries..."
-      
-      # Login a Oracle Cloud Container Registry
-      echo "Logging into Oracle Cloud Container Registry..."
-      echo "${AUTH_TOKEN_OCID}" | docker login ${REGISTRY} -u "${NAMESPACE}/a01281202@tec.mx" --password-stdin
-      
-      if [ $? -eq 0 ]; then
-        echo "✅ Successfully logged into Oracle Container Registry"
-      else
-        echo "⚠️ Failed to login to Oracle Container Registry, continuing anyway..."
-      fi
-      
-      # Opcional: Login a Docker Hub si quieres usar eclipse-temurin
-      # Si tienes credenciales de Docker Hub, descomenta estas líneas:
-      # echo "Logging into Docker Hub..."
-      # echo "${DOCKER_HUB_PASSWORD}" | docker login -u "${DOCKER_HUB_USERNAME}" --password-stdin
-      
-      echo "✅ Docker login process completed"
-
-  - type: Command
     name: "Prepare Docker build (GitHub Actions style)"
     timeoutInSeconds: 120
     command: |
@@ -202,7 +179,7 @@ steps:
       ls -la build/
 
   - type: Command
-    name: "Build Docker image"
+    name: "Build and Push Docker image with authentication"
     timeoutInSeconds: 900
     command: |
       # Generar versión
@@ -215,11 +192,85 @@ steps:
       IMAGE_TAG="${REGISTRY}/${NAMESPACE}/${REPOSITORY}/${IMAGE_NAME}:${VERSION}"
       echo "🐳 Building Docker image: ${IMAGE_TAG}"
       
-      docker build --no-cache -t "${IMAGE_TAG}" .
-      
-      if [ $? -ne 0 ]; then
-        echo "❌ Docker build failed"
+      # Verificar que tenemos las credenciales necesarias
+      if [ -z "$AUTH_TOKEN_OCID" ]; then
+        echo "❌ AUTH_TOKEN_OCID not found. Please configure it in the build variables."
         exit 1
+      fi
+      
+      echo "🔐 Logging into Docker Hub first..."
+      # Login a Docker Hub para evitar rate limits
+      echo "${AUTH_TOKEN_OCID}" | docker login -u "${NAMESPACE}/a01281202@tec.mx" --password-stdin
+      login_result=$?
+      
+      if [ $login_result -eq 0 ]; then
+        echo "✅ Successfully logged into Docker Hub"
+      else
+        echo "⚠️ Docker Hub login failed (exit code: $login_result)"
+        echo "🔄 Trying with Docker Hub registry..."
+      
+        # Si el login falló, usar imagen alternativa
+        echo "Using alternative base image to avoid rate limits..."
+        sed -i '1s|.*|FROM container-registry.oracle.com/java/openjdk:17-jre|' Dockerfile
+        echo "✅ Switched to Oracle Container Registry base image"
+      fi
+      
+      echo "🔐 Also logging into Oracle Container Registry..."
+      echo "${AUTH_TOKEN_OCID}" | docker login ${REGISTRY} -u "${NAMESPACE}/a01281202@tec.mx" --password-stdin
+      ocr_login_result=$?
+      
+      if [ $ocr_login_result -eq 0 ]; then
+        echo "✅ Successfully logged into Oracle Container Registry"
+      else
+        echo "❌ Failed to login to Oracle Container Registry (exit code: $ocr_login_result)"
+        echo "This might cause issues pushing the final image"
+      fi
+      
+      # Verificar contenido del Dockerfile
+      echo "📋 Current Dockerfile:"
+      head -5 Dockerfile
+      
+      # Intentar el build
+      echo "🚀 Starting Docker build..."
+      docker build --no-cache -t "${IMAGE_TAG}" .
+      build_result=$?
+      
+      if [ $build_result -ne 0 ]; then
+        echo "❌ Docker build failed with eclipse-temurin, trying alternative image..."
+      
+        # Crear Dockerfile con imagen alternativa
+        cat > Dockerfile << 'EOF'
+      FROM container-registry.oracle.com/java/openjdk:17-jre
+      
+      WORKDIR /app
+      
+      RUN mkdir -p /wallet /oci-keys
+      
+      COPY build/FileService-0.0.1-SNAPSHOT.jar /app/app.jar
+      COPY build/wallet/ /wallet/
+      COPY build/oci-keys/ /oci-keys/
+      
+      RUN chmod 755 /app/app.jar
+      RUN chmod 600 /wallet/* /oci-keys/* 2>/dev/null || true
+      
+      ENV TNS_ADMIN=/wallet
+      ENV ORACLE_HOME=/wallet
+      ENV LD_LIBRARY_PATH=/wallet
+      ENV OCI_PRIVATE_KEY_PATH=/oci-keys/oci-private-key.pem
+      
+      EXPOSE 8082
+      
+      ENTRYPOINT ["java", "-Djava.security.egd=file:/dev/./urandom", "-jar", "/app/app.jar"]
+      EOF
+      
+      echo "🔄 Retrying build with Oracle OpenJDK image..."
+      docker build --no-cache -t "${IMAGE_TAG}" .
+      build_result=$?
+      fi
+      
+      if [ $build_result -ne 0 ]; then
+      echo "❌ Docker build failed even with alternative image"
+      exit 1
       fi
       
       echo "✅ Docker image built successfully!"
@@ -227,12 +278,13 @@ steps:
       # Push the image to Oracle Container Registry
       echo "📤 Pushing image to registry..."
       docker push "${IMAGE_TAG}"
+      push_result=$?
       
-      if [ $? -eq 0 ]; then
-        echo "✅ Image pushed successfully to registry!"
+      if [ $push_result -eq 0 ]; then
+      echo "✅ Image pushed successfully to registry!"
       else
-        echo "❌ Failed to push image to registry"
-        exit 1
+    echo "❌ Failed to push image to registry (exit code: $push_result)"
+      exit 1
       fi
       
       # Exportar variables
