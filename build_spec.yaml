@@ -245,7 +245,7 @@ steps:
       echo "Creating Dockerfile (using GraalVM from Oracle registry)..."
       cat > Dockerfile << 'EOF'
       FROM container-registry.oracle.com/graalvm/jdk:17
-      
+    
       WORKDIR /app
       
       RUN mkdir -p /wallet /oci-keys
@@ -257,10 +257,21 @@ steps:
       RUN chmod 755 /app/app.jar
       RUN chmod 600 /wallet/* /oci-keys/* 2>/dev/null || true
       
+      # Variables de entorno Oracle
       ENV TNS_ADMIN=/wallet
       ENV ORACLE_HOME=/wallet
       ENV LD_LIBRARY_PATH=/wallet
       ENV OCI_PRIVATE_KEY_PATH=/oci-keys/oci-private-key.pem
+      
+      # Debug: Verificar que los archivos estén presentes
+      RUN echo "=== WALLET DEBUG ===" && \
+      ls -la /wallet/ && \
+      echo "=== WALLET FILES CONTENT CHECK ===" && \
+      file /wallet/* && \
+      echo "=== SQLNET.ORA CONTENT ===" && \
+      cat /wallet/sqlnet.ora 2>/dev/null || echo "sqlnet.ora not found" && \
+      echo "=== TNSNAMES.ORA CONTENT ===" && \
+      head -5 /wallet/tnsnames.ora 2>/dev/null || echo "tnsnames.ora not found"
       
       EXPOSE 8082
       
