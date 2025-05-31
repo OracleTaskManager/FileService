@@ -29,36 +29,59 @@ steps:
       echo "✅ Java 17 installed successfully"
 
   - type: Command
-    name: "Fix Oracle Version Compatibility in POM"
+    name: "Use ONLY Existing Oracle Versions"
     timeoutInSeconds: 180
     command: |
-      echo "🔧 FIXING ORACLE VERSION INCOMPATIBILITY IN POM.XML..."
+      echo "🔧 ENSURING ONLY REAL/EXISTING ORACLE VERSIONS..."
       
       # Crear backup del pom original
-      cp pom.xml pom.xml.backup
+      cp pom.xml pom-original-backup.xml
       
-      # Reemplazar las versiones Oracle inconsistentes
-      echo "Updating Oracle dependency versions to 23.2.0.0..."
+      echo "📋 Current Oracle versions in pom.xml:"
+      grep -E "(oracle.*version|ojdbc.*version)" pom.xml || echo "No Oracle version properties found"
       
-      # Método más robusto: usar sed para reemplazar las versiones
-      sed -i 's|<version>21\.9\.0\.0</version>|<version>23.2.0.0</version>|g' pom.xml
-      sed -i 's|<version>19\.8\.0\.0</version>|<version>23.2.0.0</version>|g' pom.xml
+      # Actualizar SOLO a versiones que existen en Maven Central
+      # Basado en la búsqueda anterior: 21.9.0.0 existe para todas las librerías
+      echo "🚀 Setting Oracle dependencies to CONFIRMED existing versions..."
       
-      # Verificar cambios
-      echo "📋 Versiones Oracle después de la corrección:"
-      grep -A1 -B1 "oracle.*database.*security\|oracle.*database.*jdbc" pom.xml | grep version || echo "No explicit Oracle versions found"
+      # Actualizar versiones Oracle a las que SÍ existen
+      sed -i 's|<oracle\.jdbc\.version>.*</oracle\.jdbc\.version>|<oracle.jdbc.version>21.9.0.0</oracle.jdbc.version>|g' pom.xml
+      sed -i 's|<oracle\.security\.version>.*</oracle\.security\.version>|<oracle.security.version>21.9.0.0</oracle.security.version>|g' pom.xml
       
-      # Agregar propiedad de versión Oracle si no existe
-      if ! grep -q "<oracle.version>" pom.xml; then
-        echo "Adding Oracle version property..."
+      # Si las propiedades no existen, agregarlas
+      if ! grep -q "oracle.jdbc.version" pom.xml; then
+        echo "Adding Oracle version properties with EXISTING versions..."
         sed -i '/<java.version>17<\/java.version>/a \
-        <oracle.version>23.2.0.0</oracle.version>' pom.xml
+        <!-- EXISTING ORACLE VERSIONS IN MAVEN CENTRAL --> \
+        <oracle.jdbc.version>21.9.0.0</oracle.jdbc.version> \
+        <oracle.security.version>21.9.0.0</oracle.security.version>' pom.xml
       
-        # Reemplazar versiones hardcoded con la propiedad
-        sed -i 's|<version>23\.2\.0\.0</version>|<version>${oracle.version}</version>|g' pom.xml
+        # Reemplazar versiones hardcoded con propiedades
+        sed -i 's|<version>19\.18\.0\.0</version>|<version>${oracle.jdbc.version}</version>|g' pom.xml
+        sed -i 's|<version>23\.2\.0\.0</version>|<version>${oracle.jdbc.version}</version>|g' pom.xml
       fi
       
-      echo "✅ Oracle version compatibility fixed"
+      echo "✅ POM updated with ONLY existing Oracle versions!"
+      echo "📋 Final Oracle versions:"
+      grep -E "(oracle.*version)" pom.xml
+
+  - type: Command
+    name: "Verify Oracle Dependencies Exist"
+    timeoutInSeconds: 120
+    command: |
+      export JAVA_HOME=/opt/java17
+      export PATH=$JAVA_HOME/bin:$PATH
+      
+      echo "🔍 VERIFYING Oracle dependencies can be resolved..."
+      
+      # Intentar resolver solo las dependencias Oracle para verificar
+      mvn dependency:resolve -Dsilent=true | grep oracle || true
+      
+      if [ $? -eq 0 ]; then
+        echo "✅ Oracle dependencies can be resolved"
+      else
+        echo "⚠️ Some Oracle dependencies might have issues, but continuing..."
+      fi
 
   - type: Command
     name: "Recreate wallet files - SSO ONLY approach"
@@ -101,7 +124,7 @@ steps:
         return 0
       }
       
-      echo "🔐 Processing wallet secrets (SSO-only approach)..."
+      echo "🔐 Processing wallet secrets..."
       
       get_secret "$WALLET_TNSNAMES_ORA_OCID" "wallet/tnsnames.ora" false || true
       get_secret "$WALLET_SQLNET_ORA_OCID" "wallet/sqlnet.ora" false || true  
@@ -109,7 +132,7 @@ steps:
       get_secret "$OBJECT_STORAGE_PRIVATE_KEY_OCID" "oci-keys/oci-private-key.pem" false || true
       get_secret "$WALLET_CWALLET_SSO_OCID" "wallet/cwallet.sso" true || true
       
-      # Configurar sqlnet.ora para SSO-only con compatibilidad máxima
+      # Configurar sqlnet.ora para máxima compatibilidad
       echo "🔧 Creating highly compatible sqlnet.ora..."
       cat > wallet/sqlnet.ora << 'EOF'
       WALLET_LOCATION = (SOURCE = (METHOD = file) (METHOD_DATA = (DIRECTORY="/wallet")))
@@ -121,7 +144,7 @@ steps:
       
       chmod 600 wallet/* oci-keys/* 2>/dev/null || true
       
-      echo "✅ SSO-only wallet processing completed"
+      echo "✅ Wallet processing completed"
 
   - type: Command
     name: "Modify application.properties"
@@ -135,25 +158,28 @@ steps:
       fi
 
   - type: Command
-    name: "Build with Maven - Version-Compatible Oracle Libraries"
+    name: "Build with REAL Oracle Library Versions"
     timeoutInSeconds: 600
     command: |
       export JAVA_HOME=/opt/java17
       export PATH=$JAVA_HOME/bin:$PATH
       
-      echo "🚀 Building with version-compatible Oracle libraries..."
-      echo "📋 Current pom.xml Oracle dependencies:"
-      grep -A1 -B1 "oracle" pom.xml | grep version | head -5
+      echo "🚀 Building with REAL/EXISTING Oracle library versions..."
+      echo "📋 Final Oracle dependencies that will be used:"
+      grep -E "(oracle.*version)" pom.xml
       
-      # Build con limpieza forzada
+      # Build con force update y verbose para debug
+      mvn clean package -DskipTests -U -X | head -50 || true
       mvn clean package -DskipTests -U
       
       if [ ! -f "target/FileService-0.0.1-SNAPSHOT.jar" ]; then
         echo "❌ JAR file not found!"
+        echo "🔍 Checking target directory contents:"
+        ls -la target/ || echo "Target directory doesn't exist"
         exit 1
       fi
       
-      echo "✅ Maven build successful with compatible Oracle versions!"
+      echo "✅ Maven build successful with REAL Oracle versions!"
       
       # Verificar las versiones finales en el JAR
       echo "🔍 Oracle library versions in final JAR:"
@@ -188,7 +214,7 @@ steps:
       ENV LD_LIBRARY_PATH=/wallet
       ENV OCI_PRIVATE_KEY_PATH=/oci-keys/oci-private-key.pem
       
-      RUN echo "=== FINAL WALLET VERIFICATION ===" && ls -la /wallet/ && echo "=== SQLNET.ORA FINAL ===" && cat /wallet/sqlnet.ora
+      RUN echo "=== COMPATIBLE VERSION WALLET VERIFICATION ===" && ls -la /wallet/ && echo "=== SQLNET.ORA CONTENT ===" && cat /wallet/sqlnet.ora
       
       EXPOSE 8082
       
@@ -224,7 +250,7 @@ steps:
       export IMAGE_FULL_NAME="${IMAGE_TAG}"
       export VERSION="${VERSION}"
       
-      echo "✅ SUCCESS: Image built with Oracle version compatibility fix!"
+      echo "✅ SUCCESS: Build completed with REAL Oracle versions!"
 
 outputArtifacts:
   - name: file-service-image

@@ -1,23 +1,35 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-		 xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
 	<modelVersion>4.0.0</modelVersion>
 	<parent>
 		<groupId>org.springframework.boot</groupId>
 		<artifactId>spring-boot-starter-parent</artifactId>
 		<version>3.4.3</version>
-		<relativePath/>
+		<relativePath/> <!-- lookup parent from repository -->
 	</parent>
 	<groupId>com.Oracle</groupId>
 	<artifactId>FileService</artifactId>
 	<version>0.0.1-SNAPSHOT</version>
 	<name>FileService</name>
-	<description>Files Service for the Oracle task manager</description>
-
+	<description>Files Service fot the Oracle task manager</description>
+	<url/>
+	<licenses>
+		<license/>
+	</licenses>
+	<developers>
+		<developer/>
+	</developers>
+	<scm>
+		<connection/>
+		<developerConnection/>
+		<tag/>
+		<url/>
+	</scm>
 	<properties>
 		<java.version>17</java.version>
-		<!-- SOLUCIÓN: TODAS LAS LIBRERÍAS ORACLE EN LA MISMA VERSIÓN -->
-		<oracle.version>23.2.0.0</oracle.version>
+		<!-- Versiones Oracle consistentes -->
+		<oracle.jdbc.version>23.2.0.0</oracle.jdbc.version>
 	</properties>
 
 	<dependencyManagement>
@@ -46,39 +58,36 @@
 			<artifactId>spring-boot-starter-web</artifactId>
 		</dependency>
 
-		<!-- ⭐ CLAVE: TODAS LAS LIBRERÍAS ORACLE EN LA MISMA VERSIÓN ⭐ -->
 		<dependency>
 			<groupId>com.oracle.database.jdbc</groupId>
 			<artifactId>ojdbc11</artifactId>
-			<version>${oracle.version}</version>
+			<version>23.2.0.0</version>
 		</dependency>
 
 		<dependency>
 			<groupId>com.oracle.database.jdbc</groupId>
 			<artifactId>ucp</artifactId>
-			<version>${oracle.version}</version>
+			<version>19.8.0.0</version>
 		</dependency>
 
-		<!-- ESTO ES LO CRÍTICO: oraclepki EN LA MISMA VERSIÓN QUE OJDBC -->
 		<dependency>
 			<groupId>com.oracle.database.security</groupId>
 			<artifactId>oraclepki</artifactId>
-			<version>${oracle.version}</version>
+			<version>21.9.0.0</version>
 		</dependency>
 
 		<dependency>
 			<groupId>com.oracle.database.security</groupId>
 			<artifactId>osdt_core</artifactId>
-			<version>${oracle.version}</version>
+			<version>21.9.0.0</version>
 		</dependency>
 
 		<dependency>
 			<groupId>com.oracle.database.security</groupId>
 			<artifactId>osdt_cert</artifactId>
-			<version>${oracle.version}</version>
+			<version>21.9.0.0</version>
 		</dependency>
 
-		<!-- JWT y OCI SDK -->
 		<dependency>
 			<groupId>com.auth0</groupId>
 			<artifactId>java-jwt</artifactId>
@@ -97,10 +106,32 @@
 
 		<dependency>
 			<groupId>com.oracle.oci.sdk</groupId>
+			<artifactId>oci-java-sdk-common-httpclient-jersey</artifactId>
+			<exclusions>
+				<exclusion>
+					<groupId>com.oracle.oci.sdk</groupId>
+					<artifactId>oci-java-sdk-common-httpclient-jersey</artifactId>
+				</exclusion>
+			</exclusions>
+		</dependency>
+
+		<dependency>
+			<groupId>com.oracle.oci.sdk</groupId>
 			<artifactId>oci-java-sdk-common-httpclient-jersey3</artifactId>
 		</dependency>
 
-		<!-- Jakarta APIs -->
+<!--		<dependency>
+			<groupId>org.glassfish.jersey.core</groupId>
+			<artifactId>jersey-client</artifactId>
+			<version>3.1.2</version>
+		</dependency>
+
+		<dependency>
+			<groupId>org.glassfish.jersey.inject</groupId>
+			<artifactId>jersey-hk2</artifactId>
+			<version>3.1.2</version>
+		</dependency>-->
+
 		<dependency>
 			<groupId>jakarta.ws.rs</groupId>
 			<artifactId>jakarta.ws.rs-api</artifactId>
@@ -113,14 +144,20 @@
 			<version>3.0.0</version>
 		</dependency>
 
-		<!-- Hibernate -->
 		<dependency>
 			<groupId>org.hibernate</groupId>
 			<artifactId>hibernate-core</artifactId>
 			<version>6.5.2.Final</version>
 		</dependency>
 
-		<!-- Testing -->
+<!--
+		<dependency>
+			<groupId>org.springframework</groupId>
+			<artifactId>spring-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+-->
+
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-test</artifactId>
@@ -132,14 +169,11 @@
 			<scope>test</scope>
 		</dependency>
 
-		<!-- Documentation -->
 		<dependency>
 			<groupId>org.springdoc</groupId>
 			<artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
 			<version>2.8.6</version>
 		</dependency>
-
-		<!-- Environment -->
 		<dependency>
 			<groupId>io.github.cdimascio</groupId>
 			<artifactId>java-dotenv</artifactId>
@@ -154,6 +188,34 @@
 				<groupId>org.springframework.boot</groupId>
 				<artifactId>spring-boot-maven-plugin</artifactId>
 			</plugin>
+
+<!--
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-shade-plugin</artifactId>
+				<version>3.3.0</version>
+				<executions>
+					<execution>
+						<phase>package</phase>
+						<goals>
+							<goal>shade</goal>
+						</goals>
+						<configuration>
+							<relocations>
+								<relocation>
+									<pattern>javax.ws.rs</pattern>
+									<shadedPattern>com.oracle.javax.ws.rs</shadedPattern>
+								</relocation>
+							</relocations>
+
+							<finalName>FileService-shaded</finalName>
+
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+-->
+
 		</plugins>
 	</build>
 
