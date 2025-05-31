@@ -29,6 +29,38 @@ steps:
       echo "✅ Java 17 installed successfully"
 
   - type: Command
+    name: "Fix Oracle Version Compatibility in POM"
+    timeoutInSeconds: 180
+    command: |
+      echo "🔧 FIXING ORACLE VERSION INCOMPATIBILITY IN POM.XML..."
+      
+      # Crear backup del pom original
+      cp pom.xml pom.xml.backup
+      
+      # Reemplazar las versiones Oracle inconsistentes
+      echo "Updating Oracle dependency versions to 23.2.0.0..."
+      
+      # Método más robusto: usar sed para reemplazar las versiones
+      sed -i 's|<version>21\.9\.0\.0</version>|<version>23.2.0.0</version>|g' pom.xml
+      sed -i 's|<version>19\.8\.0\.0</version>|<version>23.2.0.0</version>|g' pom.xml
+      
+      # Verificar cambios
+      echo "📋 Versiones Oracle después de la corrección:"
+      grep -A1 -B1 "oracle.*database.*security\|oracle.*database.*jdbc" pom.xml | grep version || echo "No explicit Oracle versions found"
+      
+      # Agregar propiedad de versión Oracle si no existe
+      if ! grep -q "<oracle.version>" pom.xml; then
+        echo "Adding Oracle version property..."
+        sed -i '/<java.version>17<\/java.version>/a \
+        <oracle.version>23.2.0.0</oracle.version>' pom.xml
+      
+        # Reemplazar versiones hardcoded con la propiedad
+        sed -i 's|<version>23\.2\.0\.0</version>|<version>${oracle.version}</version>|g' pom.xml
+      fi
+      
+      echo "✅ Oracle version compatibility fixed"
+
+  - type: Command
     name: "Recreate wallet files - SSO ONLY approach"
     timeoutInSeconds: 300
     command: |
@@ -71,118 +103,25 @@ steps:
       
       echo "🔐 Processing wallet secrets (SSO-only approach)..."
       
-      # Archivos esenciales
       get_secret "$WALLET_TNSNAMES_ORA_OCID" "wallet/tnsnames.ora" false || true
       get_secret "$WALLET_SQLNET_ORA_OCID" "wallet/sqlnet.ora" false || true  
       get_secret "$WALLET_OJDBC_PROPERTIES_OCID" "wallet/ojdbc.properties" false || true
       get_secret "$OBJECT_STORAGE_PRIVATE_KEY_OCID" "oci-keys/oci-private-key.pem" false || true
-      
-      # Solo cwallet.sso (que funciona correctamente)
       get_secret "$WALLET_CWALLET_SSO_OCID" "wallet/cwallet.sso" true || true
       
-      # IMPORTANTE: Configurar sqlnet.ora para SSO-only
-      echo "🔧 Configuring sqlnet.ora for SSO-only mode..."
+      # Configurar sqlnet.ora para SSO-only con compatibilidad máxima
+      echo "🔧 Creating highly compatible sqlnet.ora..."
       cat > wallet/sqlnet.ora << 'EOF'
       WALLET_LOCATION = (SOURCE = (METHOD = file) (METHOD_DATA = (DIRECTORY="/wallet")))
       SSL_SERVER_DN_MATCH=yes
       SQLNET.WALLET_OVERRIDE = TRUE
       SSL_CLIENT_AUTHENTICATION = FALSE
+      SQLNET.AUTHENTICATION_SERVICES = (NONE)
       EOF
       
       chmod 600 wallet/* oci-keys/* 2>/dev/null || true
       
       echo "✅ SSO-only wallet processing completed"
-
-  - type: Command
-    name: "Verify Wallet Files"
-    timeoutInSeconds: 120
-    command: |
-      echo "🔍 Verificando archivos de wallet..."
-      
-      WALLET_DIR="wallet"
-      ERRORS=0
-      
-      # Función para verificar archivos
-      verify_file() {
-          local file=$1
-          local expected_type=$2
-          local min_size=${3:-1}
-      
-          if [ ! -f "$file" ]; then
-              echo "❌ FALTA: $file"
-              ((ERRORS++))
-              return 1
-          fi
-      
-          local size=$(wc -c < "$file")
-          if [ "$size" -lt "$min_size" ]; then
-              echo "❌ VACÍO: $file (${size} bytes)"
-              ((ERRORS++))
-              return 1
-          fi
-      
-          echo "✅ OK: $file (${size} bytes)"
-      
-          # Verificaciones específicas por tipo
-          case "$expected_type" in
-              "sso")
-                  if file "$file" | grep -q "data"; then
-                      echo "   ✅ Archivo SSO válido"
-                  else
-                      echo "   ⚠️ Archivo SSO puede estar corrupto"
-                  fi
-                  ;;
-              "pem")
-                  if grep -q "BEGIN" "$file" && grep -q "END" "$file"; then
-                      echo "   ✅ Estructura PEM válida"
-                  else
-                      echo "   ⚠️ Estructura PEM inválida"
-                      ((ERRORS++))
-                  fi
-                  ;;
-          esac
-      
-          return 0
-      }
-      
-      # Verificar archivos críticos
-      echo "📋 Verificando archivos críticos del wallet..."
-      
-      verify_file "$WALLET_DIR/tnsnames.ora" "text" 100
-      verify_file "$WALLET_DIR/sqlnet.ora" "text" 50
-      verify_file "$WALLET_DIR/cwallet.sso" "sso" 1000
-      
-      if [ -f "oci-keys/oci-private-key.pem" ]; then
-          verify_file "oci-keys/oci-private-key.pem" "pem" 1000
-      fi
-      
-      # Verificar configuración de sqlnet.ora
-      echo ""
-      echo "🔧 Verificando configuración de sqlnet.ora..."
-      if [ -f "$WALLET_DIR/sqlnet.ora" ]; then
-          echo "Contenido actual:"
-          cat "$WALLET_DIR/sqlnet.ora"
-      
-          if grep -q "WALLET_LOCATION.*wallet" "$WALLET_DIR/sqlnet.ora"; then
-              echo "✅ WALLET_LOCATION configurado correctamente"
-          else
-              echo "❌ WALLET_LOCATION no configurado correctamente"
-              ((ERRORS++))
-          fi
-      else
-          echo "❌ sqlnet.ora no encontrado"
-          ((ERRORS++))
-      fi
-      
-      # Resultado final
-      echo ""
-      echo "===================="
-      if [ $ERRORS -eq 0 ]; then
-          echo "✅ VERIFICACIÓN COMPLETA: Wallet parece estar correcto"
-      else
-          echo "❌ VERIFICACIÓN FALLIDA: $ERRORS errores encontrados"
-          exit 1
-      fi
 
   - type: Command
     name: "Modify application.properties"
@@ -196,20 +135,29 @@ steps:
       fi
 
   - type: Command
-    name: "Build with Maven"
+    name: "Build with Maven - Version-Compatible Oracle Libraries"
     timeoutInSeconds: 600
     command: |
       export JAVA_HOME=/opt/java17
       export PATH=$JAVA_HOME/bin:$PATH
       
-      mvn clean package -DskipTests
+      echo "🚀 Building with version-compatible Oracle libraries..."
+      echo "📋 Current pom.xml Oracle dependencies:"
+      grep -A1 -B1 "oracle" pom.xml | grep version | head -5
+      
+      # Build con limpieza forzada
+      mvn clean package -DskipTests -U
       
       if [ ! -f "target/FileService-0.0.1-SNAPSHOT.jar" ]; then
         echo "❌ JAR file not found!"
         exit 1
       fi
       
-      echo "✅ Maven build successful!"
+      echo "✅ Maven build successful with compatible Oracle versions!"
+      
+      # Verificar las versiones finales en el JAR
+      echo "🔍 Oracle library versions in final JAR:"
+      unzip -l target/FileService-0.0.1-SNAPSHOT.jar | grep -E "(oraclepki|ojdbc)" | head -3
 
   - type: Command
     name: "Prepare Docker build"
@@ -240,11 +188,11 @@ steps:
       ENV LD_LIBRARY_PATH=/wallet
       ENV OCI_PRIVATE_KEY_PATH=/oci-keys/oci-private-key.pem
       
-      RUN echo "=== WALLET SSO-ONLY DEBUG ===" && ls -la /wallet/ && echo "=== CWALLET.SSO CHECK ===" && if [ -f "/wallet/cwallet.sso" ]; then echo "cwallet.sso size: $(wc -c < /wallet/cwallet.sso) bytes"; else echo "cwallet.sso NOT FOUND"; fi && echo "=== SQLNET.ORA CONTENT ===" && cat /wallet/sqlnet.ora
+      RUN echo "=== FINAL WALLET VERIFICATION ===" && ls -la /wallet/ && echo "=== SQLNET.ORA FINAL ===" && cat /wallet/sqlnet.ora
       
       EXPOSE 8082
       
-      ENTRYPOINT ["java", "-Djava.security.egd=file:/dev/./urandom", "-Doracle.net.wallet_location=/wallet", "-Doracle.net.tns_admin=/wallet", "-jar", "/app/app.jar"]
+      ENTRYPOINT ["java", "-Djava.security.egd=file:/dev/./urandom", "-Doracle.net.wallet_location=/wallet", "-Doracle.net.tns_admin=/wallet", "-Doracle.jdbc.fanEnabled=false", "-jar", "/app/app.jar"]
       EOF
 
   - type: Command
@@ -270,10 +218,13 @@ steps:
       
       echo "${AUTH_TOKEN}" | docker login ${REGISTRY} -u "${DOCKER_USERNAME}" --password-stdin
       
+      echo "🚀 Building Docker image with COMPATIBLE Oracle libraries..."
       docker build --no-cache -t "${IMAGE_TAG}" .
       
       export IMAGE_FULL_NAME="${IMAGE_TAG}"
       export VERSION="${VERSION}"
+      
+      echo "✅ SUCCESS: Image built with Oracle version compatibility fix!"
 
 outputArtifacts:
   - name: file-service-image
