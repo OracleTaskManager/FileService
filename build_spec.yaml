@@ -29,72 +29,20 @@ steps:
       echo "✅ Java 17 installed successfully"
 
   - type: Command
-    name: "Use ONLY Existing Oracle Versions"
-    timeoutInSeconds: 180
-    command: |
-      echo "🔧 ENSURING ONLY REAL/EXISTING ORACLE VERSIONS..."
-      
-      # Crear backup del pom original
-      cp pom.xml pom-original-backup.xml
-      
-      echo "📋 Current Oracle versions in pom.xml:"
-      grep -E "(oracle.*version|ojdbc.*version)" pom.xml || echo "No Oracle version properties found"
-      
-      # Actualizar SOLO a versiones que existen en Maven Central
-      # Basado en la búsqueda anterior: 21.9.0.0 existe para todas las librerías
-      echo "🚀 Setting Oracle dependencies to CONFIRMED existing versions..."
-      
-      # Actualizar versiones Oracle a las que SÍ existen
-      sed -i 's|<oracle\.jdbc\.version>.*</oracle\.jdbc\.version>|<oracle.jdbc.version>21.9.0.0</oracle.jdbc.version>|g' pom.xml
-      sed -i 's|<oracle\.security\.version>.*</oracle\.security\.version>|<oracle.security.version>21.9.0.0</oracle.security.version>|g' pom.xml
-      
-      # Si las propiedades no existen, agregarlas
-      if ! grep -q "oracle.jdbc.version" pom.xml; then
-        echo "Adding Oracle version properties with EXISTING versions..."
-        sed -i '/<java.version>17<\/java.version>/a \
-        <!-- EXISTING ORACLE VERSIONS IN MAVEN CENTRAL --> \
-        <oracle.jdbc.version>21.9.0.0</oracle.jdbc.version> \
-        <oracle.security.version>21.9.0.0</oracle.security.version>' pom.xml
-      
-        # Reemplazar versiones hardcoded con propiedades
-        sed -i 's|<version>19\.18\.0\.0</version>|<version>${oracle.jdbc.version}</version>|g' pom.xml
-        sed -i 's|<version>23\.2\.0\.0</version>|<version>${oracle.jdbc.version}</version>|g' pom.xml
-      fi
-      
-      echo "✅ POM updated with ONLY existing Oracle versions!"
-      echo "📋 Final Oracle versions:"
-      grep -E "(oracle.*version)" pom.xml
-
-  - type: Command
-    name: "Verify Oracle Dependencies Exist"
-    timeoutInSeconds: 120
-    command: |
-      export JAVA_HOME=/opt/java17
-      export PATH=$JAVA_HOME/bin:$PATH
-      
-      echo "🔍 VERIFYING Oracle dependencies can be resolved..."
-      
-      # Intentar resolver solo las dependencias Oracle para verificar
-      mvn dependency:resolve -Dsilent=true | grep oracle || true
-      
-      if [ $? -eq 0 ]; then
-        echo "✅ Oracle dependencies can be resolved"
-      else
-        echo "⚠️ Some Oracle dependencies might have issues, but continuing..."
-      fi
-
-  - type: Command
-    name: "Recreate wallet files - SSO ONLY approach"
+    name: "Recreate wallet files with correct secret handling"
     timeoutInSeconds: 300
     command: |
+      echo "🔐 Recreating wallet files with CORRECT secret type handling..."
+      
+      # Crear directorios
       mkdir -p wallet oci-keys
       
-      get_secret() {
+      # Función para archivos de TEXTO PLANO (almacenados como plaintext en vault)
+      get_plaintext_secret() {
         local secret_id=$1
         local output_file=$2
-        local is_double_encoded=${3:-false}
       
-        echo "Getting secret for: $(basename $output_file)"
+        echo "📄 Getting PLAINTEXT secret for: $(basename $output_file)"
       
         local content=$(oci secrets secret-bundle get --secret-id "$secret_id" --stage LATEST --query 'data."secret-bundle-content".content' --raw-output 2>/dev/null)
         if [ $? -ne 0 ] || [ -z "$content" ]; then
@@ -102,129 +50,240 @@ steps:
           return 1
         fi
       
-        local decoded_once=$(echo "$content" | base64 -d 2>/dev/null)
-        if [ $? -ne 0 ]; then
-          echo "❌ Failed first base64 decode"
-          return 1
-        fi
-      
-        if [ "$is_double_encoded" = true ]; then
-          local decoded_twice=$(echo "$decoded_once" | base64 -d 2>/dev/null)
-          if [ $? -eq 0 ] && [ ! -z "$decoded_twice" ]; then
-            echo "$decoded_twice" > "$output_file"
-          else
-            echo "$decoded_once" > "$output_file"
-          fi
-        else
-          echo "$decoded_once" > "$output_file"
-        fi
+        # Solo UNA decodificación base64 (del vault) - el contenido ya es texto plano
+        echo "$content" | base64 -d > "$output_file"
       
         local file_size=$(wc -c < "$output_file")
-        echo "📏 Final file size: $file_size bytes"
+        echo "📏 Plaintext file size: $file_size bytes"
         return 0
       }
       
-      echo "🔐 Processing wallet secrets..."
+      # Función para archivos BINARIOS (almacenados como base64 EN vault)
+      get_binary_secret() {
+        local secret_id=$1
+        local output_file=$2
       
-      get_secret "$WALLET_TNSNAMES_ORA_OCID" "wallet/tnsnames.ora" false || true
-      get_secret "$WALLET_SQLNET_ORA_OCID" "wallet/sqlnet.ora" false || true  
-      get_secret "$WALLET_OJDBC_PROPERTIES_OCID" "wallet/ojdbc.properties" false || true
-      get_secret "$OBJECT_STORAGE_PRIVATE_KEY_OCID" "oci-keys/oci-private-key.pem" false || true
-      get_secret "$WALLET_CWALLET_SSO_OCID" "wallet/cwallet.sso" true || true
+        echo "🔢 Getting BINARY secret for: $(basename $output_file)"
       
-      # Configurar sqlnet.ora para máxima compatibilidad
-      echo "🔧 Creating highly compatible sqlnet.ora..."
-      cat > wallet/sqlnet.ora << 'EOF'
-      WALLET_LOCATION = (SOURCE = (METHOD = file) (METHOD_DATA = (DIRECTORY="/wallet")))
-      SSL_SERVER_DN_MATCH=yes
-      SQLNET.WALLET_OVERRIDE = TRUE
-      SSL_CLIENT_AUTHENTICATION = FALSE
-      SQLNET.AUTHENTICATION_SERVICES = (NONE)
-      EOF
+        local content=$(oci secrets secret-bundle get --secret-id "$secret_id" --stage LATEST --query 'data."secret-bundle-content".content' --raw-output 2>/dev/null)
+        if [ $? -ne 0 ] || [ -z "$content" ]; then
+          echo "❌ Failed to get secret $secret_id"
+          return 1
+        fi
       
+        # DOBLE decodificación: del vault + del contenido base64
+        local decoded_vault=$(echo "$content" | base64 -d 2>/dev/null)
+        if [ $? -ne 0 ]; then
+          echo "❌ Failed vault base64 decode"
+          return 1
+        fi
+      
+        echo "$decoded_vault" | base64 -d > "$output_file"
+        if [ $? -ne 0 ]; then
+          echo "⚠️ Binary decode failed, saving as single decode"
+          echo "$decoded_vault" > "$output_file"
+        fi
+      
+        local file_size=$(wc -c < "$output_file")
+        echo "📏 Binary file size: $file_size bytes"
+      
+        # Verificación específica para archivos JKS
+        if [[ "$output_file" == *.jks ]]; then
+          local jks_signature=$(xxd -l 4 -p "$output_file" 2>/dev/null | tr '[:lower:]' '[:upper:]')
+          if [[ "$jks_signature" == "FEEDFEED"* ]]; then
+            echo "✅ Valid JKS signature: $jks_signature"
+          else
+            echo "⚠️ JKS signature: $jks_signature (may be invalid)"
+          fi
+        fi
+      
+        return 0
+      }
+      
+      echo "📋 Processing secrets with correct type handling..."
+      
+      # ARCHIVOS DE TEXTO PLANO (single decode)
+      echo "🔤 Processing PLAINTEXT files..."
+      get_plaintext_secret "$WALLET_TNSNAMES_ORA_OCID" "wallet/tnsnames.ora" || true
+      get_plaintext_secret "$WALLET_SQLNET_ORA_OCID" "wallet/sqlnet.ora" || true
+      get_plaintext_secret "$WALLET_OJDBC_PROPERTIES_OCID" "wallet/ojdbc.properties" || true
+      get_plaintext_secret "$WALLET_EWALLET_PEM_OCID" "wallet/ewallet.pem" || true
+      get_plaintext_secret "$OBJECT_STORAGE_PRIVATE_KEY_OCID" "oci-keys/oci-private-key.pem" || true
+      
+      # README si existe (plaintext)
+      if [ ! -z "$WALLET_README_OCID" ]; then
+        get_plaintext_secret "$WALLET_README_OCID" "wallet/README" || true
+      fi
+      
+      # ARCHIVOS BINARIOS (double decode)
+      echo "🔢 Processing BINARY files..."
+      get_binary_secret "$WALLET_KEYSTORE_JKS_OCID" "wallet/keystore.jks" || true
+      get_binary_secret "$WALLET_TRUSTSTORE_JKS_OCID" "wallet/truststore.jks" || true
+      get_binary_secret "$WALLET_EWALLET_P12_OCID" "wallet/ewallet.p12" || true
+      get_binary_secret "$WALLET_CWALLET_SSO_OCID" "wallet/cwallet.sso" || true
+      
+      # Establecer permisos correctos
       chmod 600 wallet/* oci-keys/* 2>/dev/null || true
       
-      echo "✅ Wallet processing completed"
+      echo "✅ Wallet files recreated with correct secret handling!"
+      
+      echo "📋 Final wallet contents:"
+      ls -la wallet/
+      echo "📋 OCI keys contents:"
+      ls -la oci-keys/
+      
+      # Verificaciones específicas
+      echo "🔍 Verification checks:"
+      
+      # Verificar archivos de texto
+      if [ -f "wallet/tnsnames.ora" ]; then
+        echo "✅ tnsnames.ora: $(wc -c < wallet/tnsnames.ora) bytes"
+        echo "   📄 First line: $(head -1 wallet/tnsnames.ora)"
+      fi
+      
+      if [ -f "wallet/sqlnet.ora" ]; then
+        echo "✅ sqlnet.ora: $(wc -c < wallet/sqlnet.ora) bytes"
+        echo "   📄 Content: $(cat wallet/sqlnet.ora)"
+      fi
+      
+      # Verificar archivos binarios críticos
+      if [ -f "wallet/cwallet.sso" ]; then
+        local sso_size=$(wc -c < wallet/cwallet.sso)
+        echo "✅ cwallet.sso: ${sso_size} bytes"
+        if [ "$sso_size" -gt 1000 ]; then
+          echo "   ✅ Size looks good for SSO file"
+        else
+          echo "   ⚠️ SSO file seems small"
+        fi
+      fi
+      
+      # Verificar PEM key
+      if [ -f "oci-keys/oci-private-key.pem" ]; then
+        echo "✅ oci-private-key.pem: $(wc -c < oci-keys/oci-private-key.pem) bytes"
+        echo "   📄 Header check: $(head -1 oci-keys/oci-private-key.pem)"
+      fi
 
   - type: Command
     name: "Modify application.properties"
     timeoutInSeconds: 60
     command: |
+      echo "🔧 Modifying application.properties..."
+      
       if [ -f "src/main/resources/application.properties" ]; then
-        echo "🔧 Modifying application.properties..."
+        # Mismos cambios que GitHub Actions
         sed -i 's|TNS_ADMIN=C:/Users/cesar/Wallet_TelegramBotDatabase|TNS_ADMIN=/wallet|g' src/main/resources/application.properties
+        echo "✅ TNS_ADMIN updated"
+      
         sed -i 's|oci.private-key-path=${OCI_PRIVATE_KEY_PATH:C:/Users/cesar/ObjectStorageKeys/a01281202@tec.mx_2025-03-22T10_08_12.916Z.pem}|oci.private-key-path=/oci-keys/oci-private-key.pem|g' src/main/resources/application.properties
-        echo "✅ application.properties modified"
+        echo "✅ OCI private key path updated"
+      
+        echo "📋 Modified application.properties:"
+        cat src/main/resources/application.properties
+      else
+        echo "❌ application.properties not found!"
+        exit 1
       fi
 
   - type: Command
-    name: "Build with REAL Oracle Library Versions"
+    name: "Build with Maven"
     timeoutInSeconds: 600
     command: |
       export JAVA_HOME=/opt/java17
       export PATH=$JAVA_HOME/bin:$PATH
       
-      echo "🚀 Building with REAL/EXISTING Oracle library versions..."
-      echo "📋 Final Oracle dependencies that will be used:"
-      grep -E "(oracle.*version)" pom.xml
+      echo "🚀 Building with Maven..."
+      echo "☕ Java version: $(java -version 2>&1 | head -1)"
       
-      # Build con force update y verbose para debug
-      mvn clean package -DskipTests -U -X | head -50 || true
-      mvn clean package -DskipTests -U
+      # Mismo comando que GitHub Actions
+      mvn clean package -DskipTests
+      
+      echo "📦 Checking build results:"
+      ls -la target/
       
       if [ ! -f "target/FileService-0.0.1-SNAPSHOT.jar" ]; then
         echo "❌ JAR file not found!"
-        echo "🔍 Checking target directory contents:"
-        ls -la target/ || echo "Target directory doesn't exist"
         exit 1
       fi
       
-      echo "✅ Maven build successful with REAL Oracle versions!"
-      
-      # Verificar las versiones finales en el JAR
-      echo "🔍 Oracle library versions in final JAR:"
-      unzip -l target/FileService-0.0.1-SNAPSHOT.jar | grep -E "(oraclepki|ojdbc)" | head -3
+      local jar_size=$(stat -c%s "target/FileService-0.0.1-SNAPSHOT.jar" 2>/dev/null || stat -f%z "target/FileService-0.0.1-SNAPSHOT.jar")
+      echo "✅ JAR built successfully: ${jar_size} bytes"
 
   - type: Command
     name: "Prepare Docker build"
     timeoutInSeconds: 120
     command: |
-      mkdir -p build build/wallet build/oci-keys
+      echo "📦 Preparing Docker build context..."
       
+      # Exactamente como GitHub Actions
+      mkdir -p build
+      
+      echo "Copying JAR to build/"
       cp target/FileService-0.0.1-SNAPSHOT.jar build/
-      cp -r wallet/* build/wallet/ 2>/dev/null || true
-      cp -r oci-keys/* build/oci-keys/ 2>/dev/null || true
       
+      echo "Creating directories for wallet and oci-keys"
+      mkdir -p build/wallet build/oci-keys
+      cp -r wallet/* build/wallet/
+      cp -r oci-keys/* build/oci-keys/
+      
+      echo "Build directory contents:"
+      ls -la build/
+      echo "Build wallet contents:"
+      ls -la build/wallet/
+      echo "Build oci-keys contents:"
+      ls -la build/oci-keys/
+      
+      echo "Creating Dockerfile (GitHub Actions style with Oracle JRE)..."
       cat > Dockerfile << 'EOF'
       FROM container-registry.oracle.com/graalvm/jdk:17
       
+      # Show Java version for verification
+      RUN java -version
+      
+      # Set working directory
       WORKDIR /app
       
+      # Create directories
       RUN mkdir -p /wallet /oci-keys
       
+      # Copy JAR and wallet (same as GitHub Actions)
       COPY build/FileService-0.0.1-SNAPSHOT.jar /app/app.jar
       COPY build/wallet/ /wallet/
       COPY build/oci-keys/ /oci-keys/
       
-      RUN chmod 755 /app/app.jar
-      RUN chmod 600 /wallet/* /oci-keys/* 2>/dev/null || true
+      # Verify copied files (same as GitHub Actions)
+      RUN echo "===== Contents of /app ====="
+      RUN ls -la /app/
       
+      RUN echo "===== Contents of /wallet ====="
+      RUN ls -la /wallet/
+      
+      RUN echo "===== Contents of /oci-keys ====="
+      RUN ls -la /oci-keys/
+      
+      # Set explicit permissions (same as GitHub Actions)
+      RUN chmod 755 /app/app.jar
+      RUN chmod 600 /wallet/* /oci-keys/*
+      
+      # Configure environment variables (same as GitHub Actions)
       ENV TNS_ADMIN=/wallet
       ENV ORACLE_HOME=/wallet
       ENV LD_LIBRARY_PATH=/wallet
       ENV OCI_PRIVATE_KEY_PATH=/oci-keys/oci-private-key.pem
       
-      RUN echo "=== COMPATIBLE VERSION WALLET VERIFICATION ===" && ls -la /wallet/ && echo "=== SQLNET.ORA CONTENT ===" && cat /wallet/sqlnet.ora
-      
+      # Application port
       EXPOSE 8082
       
-      ENTRYPOINT ["java", "-Djava.security.egd=file:/dev/./urandom", "-Doracle.net.wallet_location=/wallet", "-Doracle.net.tns_admin=/wallet", "-Doracle.jdbc.fanEnabled=false", "-jar", "/app/app.jar"]
+      # Startup command same as GitHub Actions
+      ENTRYPOINT ["java", "-Djava.security.egd=file:/dev/./urandom", "-jar", "/app/app.jar"]
       EOF
+      
+      echo "✅ Docker build context prepared!"
 
   - type: Command
     name: "Build and Push Docker image"
     timeoutInSeconds: 900
     command: |
+      # Generate version
       VERSION="$(date +'%Y%m%d-%H%M%S')"
       if [ -d ".git" ]; then
         COMMIT_SHORT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
@@ -233,7 +292,9 @@ steps:
       
       IMAGE_TAG="${REGISTRY}/${NAMESPACE}/${REPOSITORY}/${IMAGE_NAME}:${VERSION}"
       
-      # Obtener auth token
+      echo "🐳 Building Docker image: ${IMAGE_TAG}"
+      
+      # Get auth token
       AUTH_TOKEN=$(oci secrets secret-bundle get --secret-id "$AUTH_TOKEN_OCID" --stage LATEST --query 'data."secret-bundle-content".content' --raw-output 2>/dev/null)
       DECODED_TOKEN=$(echo "$AUTH_TOKEN" | base64 -d 2>/dev/null)
       if [ $? -eq 0 ] && [ ! -z "$DECODED_TOKEN" ]; then
@@ -242,15 +303,37 @@ steps:
       
       DOCKER_USERNAME="${NAMESPACE}/a01281202@tec.mx"
       
+      echo "🔐 Logging into Oracle Container Registry..."
       echo "${AUTH_TOKEN}" | docker login ${REGISTRY} -u "${DOCKER_USERNAME}" --password-stdin
       
-      echo "🚀 Building Docker image with COMPATIBLE Oracle libraries..."
-      docker build --no-cache -t "${IMAGE_TAG}" .
+      echo "🚀 Building Docker image (no-cache)..."
+      docker build --no-cache -t "${IMAGE_TAG}" -f Dockerfile .
       
+      if [ $? -ne 0 ]; then
+        echo "❌ Docker build failed!"
+        exit 1
+      fi
+      
+      echo "✅ Docker image built successfully!"
+      
+      echo "📤 Pushing image to registry..."
+      docker push "${IMAGE_TAG}"
+      
+      if [ $? -eq 0 ]; then
+        echo "✅ SUCCESS: Image pushed successfully!"
+      else
+        echo "❌ Failed to push image"
+        exit 1
+      fi
+      
+      # Export variables
       export IMAGE_FULL_NAME="${IMAGE_TAG}"
       export VERSION="${VERSION}"
       
-      echo "✅ SUCCESS: Build completed with REAL Oracle versions!"
+      echo "============================================"
+      echo "Image successfully built and pushed!"
+      echo "Image: ${IMAGE_TAG}"
+      echo "============================================"
 
 outputArtifacts:
   - name: file-service-image
